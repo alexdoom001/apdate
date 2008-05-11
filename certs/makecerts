@@ -1,0 +1,19 @@
+#!/bin/sh
+
+certtool --generate-privkey --bits 4096 --outfile ca-key.pem
+certtool --generate-self-signed --load-privkey ca-key.pem --outfile ca-cert.pem --template ca.cfg
+certtool --generate-crl --load-ca-privkey ca-key.pem --load-ca-certificate ca-cert.pem --outfile crl.pem --template crl.cfg
+certtool --generate-privkey --bits 4096 --outfile sman-key.pem
+certtool --generate-certificate --load-privkey sman-key.pem --outfile sman-cert.pem --load-ca-certificate ca-cert.pem --load-ca-privkey ca-key.pem --template sman.cfg
+
+certtool --generate-privkey --bits 2048 --outfile upgen-key.pem
+certtool --generate-certificate --load-privkey upgen-key.pem --outfile upgen-cert.pem --load-ca-certificate sman-cert.pem --load-ca-privkey sman-key.pem --template upgen.cfg
+
+certtool --generate-privkey --bits 2048 --outfile updateserv-key.pem
+certtool --generate-certificate --load-privkey updateserv-key.pem --outfile updateserv-cert.pem --load-ca-certificate sman-cert.pem --load-ca-privkey sman-key.pem --template updateserv.cfg
+
+certtool --generate-privkey --bits 2048 --outfile ucertgen-key.pem
+certtool --generate-certificate --load-privkey ucertgen-key.pem --outfile ucertgen-cert.pem --load-ca-certificate sman-cert.pem --load-ca-privkey sman-key.pem --template ucertgen.cfg
+
+certtool --generate-privkey --bits 2048 --outfile user-key.pem
+certtool --generate-certificate --load-privkey user-key.pem --outfile user-cert.pem --load-ca-certificate ucertgen-cert.pem --load-ca-privkey ucertgen-key.pem --template user.cfg

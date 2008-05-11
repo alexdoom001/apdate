@@ -1,0 +1,4 @@
+type ::= <byte> <byte> <byte> <byte>
+payload ::= <byte> | <byte> <payload>
+message ::= <type> <payload>
+proto ::= <message> <proto> | <message>
