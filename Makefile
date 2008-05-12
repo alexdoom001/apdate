@@ -1,7 +1,9 @@
-all: apdate_server apdate_client
+all: apds TAGS
 
-apdate_server: apdate_server.png
-apdate_client: apdate_client.png
+graphs: apds_proto.png apdc_proto.png
+
+TAGS:
+	ctags -f TAGS *.c *.h
 
 %.png: %.dot
 	dot -Tpng -o $@ $<
@@ -9,7 +11,18 @@ apdate_client: apdate_client.png
 %.dot: %.rl
 	ragel -V $< > $@
 
-apdate_server.rl apdate_client.rl: apdate_defs.rl
+apds: apds_proto.o apds_main.o apds_cache_db.o
+
+apds_proto.c: apds_proto.rl
+	ragel -G2 $<
+
+apdc_proto.c: apdc_proto.rl
+	ragel -G2 $<
+
+apds_proto.rl apdc_proto.rl: apdate_defs.rl
 	touch $@
 
-.PHONY: all apdate_server apdate_client
+clean:
+	rm -f *~ *.dot *.png TAGS *.o apds_proto.c apdc_proto.c
+
+.PHONY: all clean

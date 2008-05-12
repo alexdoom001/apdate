@@ -10,11 +10,16 @@ upd_push_ptype		= 3;
 cl_cert_up_ptype	= 4;
 
 action err_out {
-	dump_connection();
+	goto out_bye;
 }
 
 action switch_proto {
-	;
+	switch (*p) {
+	case 1: 
+		break;
+	default:
+		goto out_bye;
+	}
 }
 
 action fill_i32 {
