@@ -62,7 +62,7 @@ action set_plen {
 }
 
 action chk_plen {
-	++pk_byte_count < pk_length;
+	++pk_byte_count < pk_length
 }
 
 action recv_cl_cert {

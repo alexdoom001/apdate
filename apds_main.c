@@ -53,14 +53,30 @@ static int generate_rsa_params (void)
 	return 0;
 }
 
-int main() {
-	int err, listen_sd, i, ret;
+char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile;
+
+int main(int argc, char **argv) {
+	int err, listen_sd, i, ret, client_len;
 	struct sockaddr_in sa_serv, sa_cli;
-	int client_len;
 	char topbuf[512];
 	char buffer[MAX_BUF + 1];
+	char *conffile_name;
 	int optval = 1;
 	char name[256];
+
+	if (argc == 2)
+		conffile_name = argv[1];
+	else if (argc == 1)
+		conffile_name = APDSCONF;
+	else {
+		printf("Usage: apds [conffile]\n");
+		exit(1);
+	}
+	
+	if (conf_parse(conffile_name) != 0) {
+		printf("Can't read config file '%s'\n", conffile_name);
+		exit(2);
+	}
 
 	// libgcrypt init, pthread init and /dev/random disallowance
 	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
@@ -68,11 +84,11 @@ int main() {
 
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials (&cert_cred);
-	gnutls_certificate_set_x509_trust_file (cert_cred, CAFILE,
+	gnutls_certificate_set_x509_trust_file (cert_cred, cafile,
 						GNUTLS_X509_FMT_PEM);
-	gnutls_certificate_set_x509_crl_file (cert_cred, CRLFILE,
+	gnutls_certificate_set_x509_crl_file (cert_cred, crlfile,
 					      GNUTLS_X509_FMT_PEM);
-	gnutls_certificate_set_x509_key_file (cert_cred, CERTFILE, KEYFILE,
+	gnutls_certificate_set_x509_key_file (cert_cred, certfile, keyfile,
 					      GNUTLS_X509_FMT_PEM);
 	generate_dh_params ();
 	generate_rsa_params ();
@@ -86,7 +102,7 @@ int main() {
 	memset(&sa_serv, '\0', sizeof(sa_serv));
 	sa_serv.sin_family = AF_INET;
 	sa_serv.sin_addr.s_addr = INADDR_ANY;
-	sa_serv.sin_port = htons (APDS_PORT);
+	sa_serv.sin_port = htons(atoi(port));
 /* Server Port number */
 	setsockopt (listen_sd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval, sizeof (int));
 	err = bind (listen_sd, (struct sockaddr *) & sa_serv, sizeof (sa_serv));
@@ -99,7 +115,7 @@ int main() {
 		struct sess_sd *ssd;
 		ssd = malloc(sizeof(struct sess_sd));
 
-		ssd->up_dir_path = NULL;
+		ssd->upd_dir_path = upddb;
 		gnutls_init (&ssd->sess, GNUTLS_SERVER);
 		gnutls_priority_set_direct (ssd->sess, "EXPORT", NULL);
 		gnutls_credentials_set (ssd->sess, GNUTLS_CRD_CERTIFICATE, cert_cred);
