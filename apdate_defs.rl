@@ -23,17 +23,21 @@ action switch_proto {
 }
 
 action fill_i32 {
-	i32 <<= 8;
-	*((unsigned char *)(&i32 + 3)) &= *p;
+	((unsigned char *) &i32)[intcnt] = *p;
+	intcnt++;
 }
 
 action fill_i64 {
-	i64 <<= 8;
-	*((unsigned char *)(&i64 + 7)) &= *p;
+	((unsigned char *) &i64)[intcnt] = *p;
+	intcnt++;
 }
 
-i32_recv = any{4} $fill_i32;
-i64_recv = any{8} $fill_i64;
+action zero_intcnt {
+	intcnt = 0;
+}
+
+i32_recv = any{4} $fill_i32 >zero_intcnt;
+i64_recv = any{8} $fill_i64 >zero_intcnt;
 
 action switch_product {
 	product_tag = be32toh(i32);
@@ -49,6 +53,7 @@ prod_ident_guard = ^prod_ident_ptype >err_out;
 
 action set_upd_req_info {
 	upd_req_version = be64toh(i64);
+	push_updates(sess, upd_req_version, product_tag);
 }
 
 upd_req_info_version = i64_recv @set_upd_req_info;
@@ -69,21 +74,36 @@ action recv_cl_cert {
 }
 
 action recv_upd_file {
+	fsync(upfile);
+	close(upfile);
 }
 
 action recv_file_byte {
+	write(upfile, p, 1);
 }
 
 action recv_cl_byte {
+
+}
+
+action start_recv_file {
+	strcpy(tname, TMP_FILE_PATTERN);
+	upfile = mkstemp(tname);
+	if (upfile < 0) {
+		fprintf(stderr, "Can't create temp file\n");
+	}
+}
+
+action start_recv_cl {
 }
 
 recv_length = i32_recv @set_plen;
 recv_payload = ((any* when chk_plen) . (any when !chk_plen));
 
-upd_push_pack = upd_push_ptype . recv_length . (recv_payload $recv_file_byte) @recv_upd_file;
+upd_push_pack = upd_push_ptype . recv_length . (recv_payload $recv_file_byte >start_recv_file) @recv_upd_file;
 upd_push_guard = ^upd_push_ptype >err_out;
 
-cl_cert_up_pack = cl_cert_up_ptype . recv_length . (recv_payload $recv_cl_byte) @recv_cl_cert;
+cl_cert_up_pack = cl_cert_up_ptype . recv_length . (recv_payload $recv_cl_byte >start_recv_cl) @recv_cl_cert;
 cl_cert_up_guard = ^cl_cert_up_ptype >err_out;
 
 }%%

@@ -6,9 +6,6 @@
 
 #define YYSTYPE char *
     
-    extern char *cafile, *verfile, *certfile, *keyfile;
-    extern char *apds_list[];
-    extern int prodcode;
     extern FILE *yyin;
  
     char apds_count = 0;
@@ -21,7 +18,7 @@
     }
 %}
 
-%token EOL CAFILE APDS_LIST FILENAME APDS_HOST QUOTE NUMBER PRODCODE VERFILE CERTFILE KEYFILE
+%token EOL CAFILE APDS_LIST FILENAME APDS_HOST QUOTE NUMBER DBPATH CERTFILE KEYFILE
 %error-verbose
 
 %%
@@ -32,8 +29,7 @@ input:
 token: EOL
 | cafiledef
 | apdsstring
-| prodcode
-| verfile
+| dbpath
 | certfile
 | keyfile
 ;
@@ -57,14 +53,10 @@ apdshost: APDS_HOST
 	     YYERROR;
 	 }
      }
-prodcode: PRODCODE NUMBER
-{
-    prodcode = atoi($2);
-}
 
-verfile: VERFILE QUOTE FILENAME QUOTE
+dbpath: DBPATH QUOTE FILENAME QUOTE
 {
-    verfile = $3;
+    dbpath = $3;
 }
 
 certfile: CERTFILE QUOTE FILENAME QUOTE

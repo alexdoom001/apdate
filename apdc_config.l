@@ -7,8 +7,7 @@
 %%
 ca_file                 return CAFILE;
 apdate_servers          return APDS_LIST;
-product_code            return PRODCODE;
-version_file            return VERFILE;
+db_path                 return DBPATH;
 cert_file               return CERTFILE;
 key_file                return KEYFILE;
 [0-9]+                  yylval=strdup(yytext); return NUMBER;

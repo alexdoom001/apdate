@@ -2,6 +2,8 @@ all: apds apdc TAGS
 
 graphs: apds_proto.png apdc_proto.png
 
+CFLAGS+=-g -D_GNU_SOURCE -Wformat
+
 TAGS: *.c *.h
 	ctags -f TAGS $^
 
@@ -17,11 +19,9 @@ apds: apds_proto.o apds_main.o apds_cache_db.o apds_config.yy.o apds_config.tab.
 apdc: apdc_proto.o apdc_main.o apdc_config.yy.o apdc_config.tab.o
 	$(CC) -lgnutls -o $@ $^
 
+apds_proto.c apdc_proto.c: apdate_defs.rl
 apds_proto.c apdc_proto.c: %.c : %.rl
 	ragel -G2 -o $@ $<
-
-apds_proto.rl apdc_proto.rl: apdate_defs.rl
-	touch $@
 
 %.yy.c: %.l %.tab.h
 	lex -o $@ $<

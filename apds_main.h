@@ -8,3 +8,5 @@
 #define MAX_SESSION_DATA_SIZE 512
 
 #define APDSCONF ETC_PREFIX "apds.conf"
+
+extern char *upddb;

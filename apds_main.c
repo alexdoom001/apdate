@@ -57,9 +57,8 @@ char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile;
 
 int main(int argc, char **argv) {
 	int err, listen_sd, i, ret, client_len;
-	struct sockaddr_in sa_serv, sa_cli;
+	struct sockaddr_in sa_serv;
 	char topbuf[512];
-	char buffer[MAX_BUF + 1];
 	char *conffile_name;
 	int optval = 1;
 	char name[256];
@@ -84,36 +83,48 @@ int main(int argc, char **argv) {
 
 	gnutls_global_init();
 	gnutls_certificate_allocate_credentials (&cert_cred);
-	gnutls_certificate_set_x509_trust_file (cert_cred, cafile,
-						GNUTLS_X509_FMT_PEM);
-	gnutls_certificate_set_x509_crl_file (cert_cred, crlfile,
-					      GNUTLS_X509_FMT_PEM);
-	gnutls_certificate_set_x509_key_file (cert_cred, certfile, keyfile,
-					      GNUTLS_X509_FMT_PEM);
+	if (gnutls_certificate_set_x509_trust_file(cert_cred, cafile,
+						   GNUTLS_X509_FMT_PEM) < 0) {
+		fprintf(stderr, "Can't load CA file (%s)\n", cafile);
+		exit(3);
+	}
+	if (gnutls_certificate_set_x509_crl_file(cert_cred, crlfile,
+						 GNUTLS_X509_FMT_PEM) < 0) {
+		fprintf(stderr, "Can't load CRL file (%s)\n", crlfile);
+		exit(4);
+	}
+	if (gnutls_certificate_set_x509_key_file(cert_cred, certfile, keyfile,
+				 GNUTLS_X509_FMT_PEM) != GNUTLS_E_SUCCESS) {
+		fprintf(stderr, "Can't load server key/cert (%s/%s)\n", keyfile,
+			certfile);
+		exit(5);
+	}
 	generate_dh_params ();
 	generate_rsa_params ();
 	gnutls_certificate_set_dh_params (cert_cred, dh_params);
 	gnutls_certificate_set_rsa_export_params (cert_cred, rsa_params);
 	cache_db_global_init();
-/* Socket operations
- */
+
 	listen_sd = socket (AF_INET, SOCK_STREAM, 0);
 	SOCKET_ERR (listen_sd, "socket");
 	memset(&sa_serv, '\0', sizeof(sa_serv));
 	sa_serv.sin_family = AF_INET;
 	sa_serv.sin_addr.s_addr = INADDR_ANY;
 	sa_serv.sin_port = htons(atoi(port));
-/* Server Port number */
+
 	setsockopt (listen_sd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval, sizeof (int));
 	err = bind (listen_sd, (struct sockaddr *) & sa_serv, sizeof (sa_serv));
 	SOCKET_ERR (err, "bind");
 	err = listen (listen_sd, 1024);
 	SOCKET_ERR (err, "listen");
-	pthread_t thread;
-	for (;;)
-	{
+
+	for (;;) {
 		struct sess_sd *ssd;
+		pthread_t *thread;
+
 		ssd = malloc(sizeof(struct sess_sd));
+		thread = malloc(sizeof(pthread_t));
+		client_len = sizeof(ssd->sa);
 
 		ssd->upd_dir_path = upddb;
 		gnutls_init (&ssd->sess, GNUTLS_SERVER);
@@ -123,8 +134,8 @@ int main(int argc, char **argv) {
 		gnutls_dh_set_prime_bits (ssd->sess, DH_BITS);
 		cache_db_session_init(&ssd->sess);
 
-		ssd->sd = accept (listen_sd, (struct sockaddr *) & sa_cli, &client_len);
-		pthread_create(&thread, NULL, apds_proto_thread, (void *) ssd);
+		ssd->sd = accept(listen_sd, (struct sockaddr *) &ssd->sa, &client_len);
+		pthread_create(thread, NULL, apds_proto_thread, (void *) ssd);
 	}
 	close (listen_sd);
 	cache_db_deinit();
