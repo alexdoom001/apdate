@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 
 #define MAX_BUF 1024
+#define INOTIFY_BUF 128
 
 struct sess_sd {
 	gnutls_session_t sess;
@@ -14,5 +15,7 @@ struct sess_sd {
 };
 
 void *apds_proto_thread(void *ssd);
+void apds_init_pthread_keys(void);
+void apds_deinit_pthread_keys(void);
 
 #endif

@@ -1,0 +1,45 @@
+#!/bin/bash
+# Apply spamassassin update
+
+DBPATH=/var/db/apdc
+STAGE=$DBPATH/staging
+SPAMDIR=/usr/share/spamassassin
+
+cmd=$1
+
+patch_apply()
+{
+	if [ ! -f $STAGE/update ]; then
+		echo "No update file in stage area $STAGE"
+		exit 4
+	fi
+	set -e
+	cp -a $SPAMDIR $STAGE/backup
+	touch $STAGE/backup_avail
+	cd $SPAMDIR && zcat $STAGE/update | patch -p1
+	set +e
+	/etc/init.d/spamassassin restart &
+}
+
+backup_restore()
+{
+	if [ -f $STAGE/backup_avail ]; then
+		cp -a $STAGE/backup/* $SPAMDIR/
+	fi
+}
+
+
+case $cmd in
+	apply)
+		patch_apply
+		;;
+	restore)
+		backup_restore
+		;;
+	*)
+		echo "Usage: $0 [apply|restore]"
+		exit 3
+		;;
+esac
+
+exit 0

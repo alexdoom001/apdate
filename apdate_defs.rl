@@ -41,6 +41,11 @@ i64_recv = any{8} $fill_i64 >zero_intcnt;
 
 action switch_product {
 	product_tag = be32toh(i32);
+	product_path = mkproduct_path(upddb, product_tag);
+	printf("APDS: client '%s'\n", strcode_get_name(products->prodcode,
+						       products->size,
+						       product_tag));
+	inotify_watch = inotify_sub(product_path);
 }
 
 proto_ident = any $switch_proto;
@@ -53,7 +58,9 @@ prod_ident_guard = ^prod_ident_ptype >err_out;
 
 action set_upd_req_info {
 	upd_req_version = be64toh(i64);
-	push_updates(sess, upd_req_version, product_tag);
+	version_string = mkversion_string(upd_req_version);
+	DEBUG(printf("Update request: %s\n", version_string));
+	ret = push_updates();
 }
 
 upd_req_info_version = i64_recv @set_upd_req_info;
@@ -76,6 +83,15 @@ action recv_cl_cert {
 action recv_upd_file {
 	fsync(upfile);
 	close(upfile);
+	runcmd = malloc(256);
+	sprintf(runcmd, "%s/apdc_place_incoming %s %s\n", libexec_path, tname,
+		dbpath);
+	ret = system(runcmd);
+	free(runcmd);
+	if (ret != 0) {
+		fprintf(stderr, "Failed to place received file\n");
+		goto out_bye;
+	}
 }
 
 action recv_file_byte {

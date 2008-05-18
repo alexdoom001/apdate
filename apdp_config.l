@@ -2,19 +2,14 @@
 #include <stdio.h>
 #define YYSTYPE char *
 #define YY_NO_INPUT 1
-#include "apds_config.tab.h"
+#include "apdp_config.tab.h"
 %}
 
 %%
 update_db_path          return UPDDBPATH;
-port                    return PORT;
 key_file                return KEYFILE;
 certificate_file        return CERTFILE;
-ca_file                 return CAFILE;
-crl_file                return CRLFILE;
-products_file           return PRODSFILE;
-debug                   return DEBUG;
-[0-9]+                  yylval=strdup(yytext); return NUMBER;
+products_file           return PRODFILE;
 [a-zA-Z0-9\/. -]+       yylval=strdup(yytext); return FILENAME;
 \"                      return QUOTE;
 \n                      return EOL;

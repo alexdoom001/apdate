@@ -1,0 +1,9 @@
+Format-Specification:
+    http://wiki.debian.org/Proposals/CopyrightFormat?action=recall&rev=226
+Upstream-Name: Apdate
+Upstream-Maintainer: John Smith <johnsmith@yahoo.com> 
+
+Files: *
+Copyright: John Smith <johnsmith@yahoo.com>
+License: GPL-2
+

@@ -1,10 +1,10 @@
-#include <endian.h>
 #include <gnutls/gnutls.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "apdc_main.h"
 #include "apdc_proto.h"
@@ -17,7 +17,7 @@
 							cl_cert_up_pack))**;
 }%%
 
-int mk_version_pk(char *buffer) {
+static int mk_version_pk(char *buffer) {
 	FILE *vf;
 	int i;
 	uint64_t version;
@@ -42,7 +42,7 @@ mkvpk_out:
 	return i;
 }
 
-int send_version_pk(gnutls_session_t session) {
+static int send_version_pk(gnutls_session_t session) {
 	char buffer[9];
 
 	if (mk_version_pk(buffer) != 0)
@@ -51,7 +51,7 @@ int send_version_pk(gnutls_session_t session) {
 	return gnutls_record_send(session, buffer, 9);
 }
 
-int send_product_pk(gnutls_session_t session) {
+static int send_product_pk(gnutls_session_t session) {
 	char buffer[5];
 	int32_t pc_be;
 
@@ -61,7 +61,7 @@ int send_product_pk(gnutls_session_t session) {
 	return gnutls_record_send(session, buffer, 5);
 }
 
-int send_proto_pk(gnutls_session_t session) {
+static int send_proto_pk(gnutls_session_t session) {
 	char buffer[2];
 
 	buffer[0] = 0;
@@ -71,18 +71,31 @@ int send_proto_pk(gnutls_session_t session) {
 }
 
 int apdc_proto(gnutls_session_t session) {
-	int err, ret, cs, i, upfile, intcnt, apdate_client_start = 13;
-	unsigned char *p, *pe, *eof;
-	char *tname = malloc(strlen(TMP_FILE_PATTERN));
-	char buffer[MAX_BUF + 1];
-	uint32_t i32, pk_byte_count, pk_length;
+	int ret, cs, upfile = 0, intcnt = 0;
+	unsigned int status;
+	unsigned char *p, *pe;
+	char *runcmd;
+	char *tname = malloc(strlen(TMP_FILE_PATTERN)+1);
+	unsigned char buffer[MAX_BUF + 1];
+	uint32_t i32, pk_byte_count = 0, pk_length = 0;
 
+	%%write data;
 	%%write init;
 
 	ret = gnutls_handshake(session);
 	if (ret < 0) {
 		fprintf(stderr, "TLS Handshake failed\n");
 		gnutls_perror (ret);
+		goto out_bye;
+	}
+
+	ret = gnutls_certificate_verify_peers2(session, &status);
+	if (ret < 0) {
+		fprintf(stderr, "Error verifying certificate\n");
+		goto out_bye;
+	}
+	if (status & GNUTLS_CERT_INVALID) {
+		fprintf(stderr, "Untrusted peer certificate\n");
 		goto out_bye;
 	}
 	ret = send_proto_pk(session);

@@ -1,0 +1,92 @@
+#!/bin/bash
+# Create and push squidguard blacklist update
+# To be ran by cron once a day
+
+DBPATH=/var/db/apdp/SQUIDGUARD
+TMPD=`mktemp -d /tmp/apdp-SQUIDGUARD-XXXXXX`
+
+clean_tmpd() {
+	rm -fr $TMPD
+}
+
+url_fetch() {
+	fn=`basename $1`
+	if [ ! -f $TMPD/$fn ]; then
+		wget -q -c -O $TMPD/$fn $1
+		if [ "$?" != "0" ]; then
+			echo "Failed to fetch blacklists.tgz"
+			clean_tmpd
+			exit 2
+		fi
+		tar xzf $TMPD/$fn -C $TMPD/
+	fi
+}
+
+for CF in `ls $DBPATH/*.cf`; do
+	PRODCODE=`basename $CF .cf`
+	RDIR=$DBPATH/$PRODCODE
+	PRODUCT=`head -n 1 $CF`
+
+	# No version information is provided by upstream authors, so just build
+	# a new DB and make a diff
+	UP_DB=$TMPD/upstream
+	if [ ! -d $UP_DB ]; then
+		mkdir $UP_DB
+		url_fetch http://squidguard.mesd.k12.or.us/blacklists.tgz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/adult.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/audio-video.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/hacking.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/gambling.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/drogue.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/phishing.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/warez.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/games.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/malware.tar.gz
+		cp -a $TMPD/blacklists/* $UP_DB/
+		for i in adult audio-video hacking gambling drogue phishing warez games malware; do
+			if [ -d "$UP_DB/$i" ]; then
+				for file in `ls -1 "$TMPD/${i}"`; do
+					cat "${TMPD}/${i}/${file}" "${UP_DB}/${i}/${file}" | sort | uniq > $TMPD/$file
+					mv "$TMPD/${file}" "${UP_DB}/${i}/${file}"
+				done
+			else
+				mv "$TMPD/$i" $UP_DB/
+			fi
+		done
+	fi
+       	ln -sf $RDIR $TMPD/a
+	ln -sf $UP_DB $TMPD/b
+	diff -puraN $TMPD/a $TMPD/b | sed "s,$TMPD/,," > $TMPD/$PRODCODE.patch
+	echo "SQUIDGUARD" > $TMPD/$PRODCODE.version
+	echo >> $TMPD/$PRODCODE.version
+	echo $PRODUCT >> $TMPD/$PRODCODE.version
+	for patch in `ls $TMPD/*.patch`; do
+		if [ "$patch" == "$TMPD/$PRODCODE.patch" ]; then
+			continue
+		fi
+		cp -a $RDIR $TMPD/$PRODCODE.p
+		patch -d $TMPD/$PRODCODE.p < $patch
+		if [ "$?" == "0" ]; then
+			diff -pqraN $TMPD/$PRODCODE $TMPD/$PRODCODE.p
+			if [ "$?" == "0" ]; then
+				COMPATPROD=`basename $patch .patch`
+				echo $PRODUCT >> $TMPD/$COMPATPROD.version
+				rm $TMPD/$PRODCODE.version
+				break
+			fi
+		fi
+		rm -fr $TMPD/$PRODCODE.p
+	done
+	patch -p1 -d $RDIR < $TMPD/$PRODCODE.patch
+	rm -fr $TMPD/$PRODCODE
+done
+
+for verf in `ls $TMPD/*.version 2>/dev/null`; do
+	BN=`basename $verf .version`
+	gzip -9 $TMPD/$BN.patch
+	apdp $TMPD/$BN.patch.gz $verf
+done
+
+clean_tmpd
+
+exit 0

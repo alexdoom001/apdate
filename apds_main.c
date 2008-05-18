@@ -3,19 +3,25 @@
  */
 
 #include <arpa/inet.h>
-#include <endian.h>
 #include <errno.h>
 #include <gcrypt.h>
 #include <gnutls/gnutls.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
+#include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <unistd.h>
 
+#include "apds_file_cache.h"
+#include "apds_inotify.h"
 #include "apds_main.h"
 #include "apds_proto.h"
 #include "apds_cache_db.h"
+#include "apds_config.h"
+#include "apdate_products.h"
 
 GCRY_THREAD_OPTION_PTHREAD_IMPL;
 
@@ -53,15 +59,18 @@ static int generate_rsa_params (void)
 	return 0;
 }
 
-char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile;
+char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile, *prodsfile;
+struct prcode_list *products;
+int debug_print = 0;
 
 int main(int argc, char **argv) {
-	int err, listen_sd, i, ret, client_len;
+	int err, listen_sd;
+	unsigned int client_len;
 	struct sockaddr_in sa_serv;
-	char topbuf[512];
 	char *conffile_name;
 	int optval = 1;
-	char name[256];
+	pthread_t inotify_thread, fcache_thread;
+	gnutls_datum_t fdata;
 
 	if (argc == 2)
 		conffile_name = argv[1];
@@ -99,11 +108,25 @@ int main(int argc, char **argv) {
 			certfile);
 		exit(5);
 	}
+	fdata = load_file(prodsfile);
+	products = apdate_parse_product_list((char *) fdata.data, fdata.size);
+	if (products == NULL) {
+		fprintf(stderr, "Can't load products file (%s)\n", prodsfile);
+		exit(8);
+	}
 	generate_dh_params ();
 	generate_rsa_params ();
 	gnutls_certificate_set_dh_params (cert_cred, dh_params);
 	gnutls_certificate_set_rsa_export_params (cert_cred, rsa_params);
 	cache_db_global_init();
+	apds_init_pthread_keys();
+
+	/*
+	 * Disable SIGPIPE, no other way to handle connection breakages
+	 */
+	signal(SIGPIPE, SIG_IGN);
+	pthread_create(&inotify_thread, NULL, apds_inotify_thread, NULL);
+	pthread_create(&fcache_thread, NULL, apds_fcache_thread, NULL);
 
 	listen_sd = socket (AF_INET, SOCK_STREAM, 0);
 	SOCKET_ERR (listen_sd, "socket");
@@ -139,7 +162,8 @@ int main(int argc, char **argv) {
 	}
 	close (listen_sd);
 	cache_db_deinit();
+	apds_deinit_pthread_keys();
 	gnutls_certificate_free_credentials (cert_cred);
-	gnutls_global_deinit ();
+	gnutls_global_deinit();
 	return 0;
 }

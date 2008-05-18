@@ -4,8 +4,10 @@
 
 #define YYSTYPE char *
     
-    extern char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile;
+    extern char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile, *prodsfile;
     extern FILE *yyin;
+    extern int yylex(void);
+    extern int debug_print;
     
     void yyerror(const char *str)
     {
@@ -18,7 +20,7 @@
     }
 %}
 
-%token EOL UPDDBPATH PORT KEYFILE CERTFILE CAFILE CRLFILE NUMBER FILENAME QUOTE
+%token EOL UPDDBPATH PORT KEYFILE CERTFILE CAFILE CRLFILE NUMBER FILENAME QUOTE PRODSFILE DEBUG
 %error-verbose
 
 %%
@@ -33,6 +35,8 @@ input:
 	 | certfiledef
 	 | cafiledef
 	 | crlfiledef
+         | prodsfiledef
+         | debugdef
 	 ;
 
  upddbdef: UPDDBPATH QUOTE FILENAME QUOTE
@@ -58,6 +62,14 @@ input:
  crlfiledef: CRLFILE QUOTE FILENAME QUOTE
      {
 	 crlfile = $3;
+     }
+ prodsfiledef: PRODSFILE QUOTE FILENAME QUOTE
+     {
+	 prodsfile = $3;
+     }
+ debugdef: DEBUG
+     {
+	 debug_print = 1;
      }
 %%
 

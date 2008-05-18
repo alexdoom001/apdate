@@ -1,5 +1,8 @@
-#include <gnutls/gnutls.h>
+#ifndef APDS_MAIN_H
+#define APDS_MAIN_H 1
+
 #include "apdate_common.h"
+#include "apdate_products.h"
 
 #define TLS_SESSION_CACHE 1024
 #define ETC_PREFIX "/etc/apds/"
@@ -10,3 +13,6 @@
 #define APDSCONF ETC_PREFIX "apds.conf"
 
 extern char *upddb;
+extern struct prcode_list *products;
+
+#endif

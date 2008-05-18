@@ -7,8 +7,9 @@
 #define YYSTYPE char *
     
     extern FILE *yyin;
+    extern int yylex(void);
  
-    char apds_count = 0;
+    unsigned int apds_count = 0;
     void yyerror(const char *str) {
 	fprintf(stderr, "config error: %s\n", str);
     }
@@ -18,7 +19,7 @@
     }
 %}
 
-%token EOL CAFILE APDS_LIST FILENAME APDS_HOST QUOTE NUMBER DBPATH CERTFILE KEYFILE
+%token EOL CAFILETOK APDS_LIST FILENAME APDS_HOST QUOTE NUMBER DBPATH CERTFILETOK KEYFILETOK CRLFILETOK LIBEXECP
 %error-verbose
 
 %%
@@ -32,9 +33,11 @@ token: EOL
 | dbpath
 | certfile
 | keyfile
+| crlfile
+| libexecpath;
 ;
 
-cafiledef: CAFILE QUOTE FILENAME QUOTE
+cafiledef: CAFILETOK QUOTE FILENAME QUOTE
 {
     cafile = $3;
 }
@@ -59,14 +62,24 @@ dbpath: DBPATH QUOTE FILENAME QUOTE
     dbpath = $3;
 }
 
-certfile: CERTFILE QUOTE FILENAME QUOTE
+certfile: CERTFILETOK QUOTE FILENAME QUOTE
 {
     certfile = $3;
 }
 
-keyfile: KEYFILE QUOTE FILENAME QUOTE
+keyfile: KEYFILETOK QUOTE FILENAME QUOTE
 {
     keyfile = $3;
+}
+
+crlfile: CRLFILETOK QUOTE FILENAME QUOTE
+{
+    crlfile = $3;
+}
+
+libexecpath: LIBEXECP QUOTE FILENAME QUOTE
+{
+    libexec_path = $3;
 }
 
 %%

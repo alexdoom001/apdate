@@ -7,14 +7,17 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <gnutls/gnutls.h>
+#include <gnutls/x509.h>
+
 
 #include "apdc_main.h"
 #include "apdc_proto.h"
+#include "apdc_config.h"
 
 char *cafile, *dbpath, *verfile, *certfile, *keyfile, *product_string;
-char *patch_queue_path;
+char *patch_queue_path, *crlfile, *libexec_path;
 char *apds_list[APDC_MAX_LIST];
-int product_code;
+uint32_t product_code;
 
 /*
  * Connects to the peer and returns a socket
@@ -23,7 +26,7 @@ int product_code;
 int tcp_connect(char *server)
 {
 	char *servname, *ppos;
-     	int err, sd, i, port;
+     	int sd, i, port, err = -1;
 	struct sockaddr_in sa;
 	struct hostent *shost;
 
@@ -70,33 +73,6 @@ void tcp_close (int sd)
 	close (sd);
 }
 
-/* Helper functions to load a certificate and key
- * files into memory.
- */
-static gnutls_datum_t load_file (const char *file)
-{
-	FILE *f;
-	gnutls_datum_t loaded_file = { NULL, 0 };
-	long filelen;
-	void *ptr;
-	if (!(f = fopen (file, "r"))
-	    || fseek (f, 0, SEEK_END) != 0
-	    || (filelen = ftell (f)) < 0
-	    || fseek (f, 0, SEEK_SET) != 0
-	    || !(ptr = malloc ((size_t) filelen))
-	    || fread (ptr, 1, (size_t) filelen, f) < (size_t) filelen)
-		return loaded_file;
-	loaded_file.data = ptr;
-	loaded_file.size = (unsigned int) filelen;
-	return loaded_file;
-}
-
-static void unload_file (gnutls_datum_t data)
-{
-	free (data.data);
-}
-
-
 /* This callback should be associated with a session by calling
  * gnutls_certificate_client_set_retrieve_function( session, cert_callback),
  * before a handshake.
@@ -106,45 +82,20 @@ static int cert_callback (gnutls_session_t session,
 	       const gnutls_pk_algorithm_t * sign_algos,
 	       int sign_algos_length, gnutls_retr_st * st)
 {
-	int i, ret;
-	size_t len;
 	gnutls_certificate_type_t type;
-	gnutls_x509_crt_t *crt = malloc(sizeof(gnutls_x509_crt_t));
-	gnutls_x509_privkey_t *key = malloc(sizeof(gnutls_x509_privkey_t));
+	gnutls_x509_crt_t *crt;
+	gnutls_x509_privkey_t *key;
 
-/* Select a certificate and return it.
- * The certificate must be of any of the "sign algorithms"
- * supported by the server.
- */
 	type = gnutls_certificate_type_get (session);
 	if (type == GNUTLS_CRT_X509) {
-		gnutls_datum_t data;
-
-		data = load_file(certfile);
-		if (data.data == NULL) {
+		crt = load_certificate(certfile);
+		if (crt == NULL) {
 			fprintf(stderr, "Error loading client certificate (%s)",
 				certfile);
 			return -1;
 		}
-		gnutls_x509_crt_init(crt);
-		ret = gnutls_x509_crt_import(*crt, &data, GNUTLS_X509_FMT_PEM);
-		unload_file(data);
-		if (ret < 0) {
-			fprintf(stderr, "Error loading client certificate (%s)",
-				certfile);
-			return -1;
-		}
-
-		data = load_file(keyfile);
-		if (data.data == NULL) {
-			fprintf(stderr, "Error loading client key (%s)",
-				keyfile);
-			return -1;
-		}
-		gnutls_x509_privkey_init(key);
-		ret = gnutls_x509_privkey_import(*key, &data, GNUTLS_X509_FMT_PEM);
-		unload_file(data);
-		if (ret < 0) {
+		key = load_privkey(keyfile);
+		if (key == NULL) {
 			fprintf(stderr, "Error loading client key (%s)",
 				keyfile);
 			return -1;
@@ -162,12 +113,12 @@ static int cert_callback (gnutls_session_t session,
 
 
 int main(int argc, char **argv) {
-	FILE *f;
-	int ret, sd, i, ii;
+	int ret, i, sd = -1;
 	gnutls_session_t session;
 	const char *err;
 	char *conffile_name, *str;
 	gnutls_certificate_credentials_t xcred;
+	struct string_code str_code;
 
 	if (argc == 2)
 		conffile_name = argv[1];
@@ -183,28 +134,13 @@ int main(int argc, char **argv) {
 		printf("Can't read config file '%s'\n", conffile_name);
 		exit(2);
 	}
-	i = strlen(dbpath) + 1;
-	verfile = malloc(i + strlen(VERSION_FILE));
-	verfile = strcpy(verfile, dbpath);
-	verfile = strcat(verfile, VERSION_FILE);
-	str = malloc(i + strlen(PRODUCT_FILE));
-	str = strcpy(str, dbpath);
-	str = strcat(str, PRODUCT_FILE);
-	f = fopen(str, "r");
-	if (f == NULL) {
-		printf("Can't read product code file '%s'", str);
-		exit(3);
-	}
-
-	ret = fscanf(f, "%u\n%a[^\n]", &product_code, &product_string);
-	fclose(f);
-	if (ret != 2) {
-		printf("Garbage in product file '%s'\n", str);
-		exit(4);
-	}
-	patch_queue_path = malloc(i + strlen(PATCH_QUEUE_PATH));
-	patch_queue_path = strcpy(patch_queue_path, dbpath);
-	patch_queue_path = strcat(patch_queue_path, PATCH_QUEUE_PATH);
+	verfile = strconcat(dbpath, VERSION_FILE);
+	str = strconcat(dbpath, PRODUCT_FILE);
+	str_code = load_product_file(str);
+	product_code = (uint32_t) str_code.code;
+	product_string = str_code.str;
+	free(str);
+	patch_queue_path = strconcat(dbpath, PATCH_QUEUE_PATH);
 
 	gnutls_global_init ();
 	gnutls_certificate_allocate_credentials (&xcred);
