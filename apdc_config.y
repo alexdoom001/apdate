@@ -19,7 +19,7 @@
     }
 %}
 
-%token EOL CAFILETOK APDS_LIST FILENAME APDS_HOST QUOTE NUMBER DBPATH CERTFILETOK KEYFILETOK CRLFILETOK LIBEXECP
+%token EOL CAFILETOK APDS_LIST FILENAME APDS_HOST QUOTE NUMBER DBPATH CERTFILETOK KEYFILETOK CRLFILETOK LIBEXECP UPDSTORAGEP CERTSDIR DEBUGTOK REVFILETOK
 %error-verbose
 
 %%
@@ -34,7 +34,11 @@ token: EOL
 | certfile
 | keyfile
 | crlfile
-| libexecpath;
+| libexecpath
+| updstoragepath
+| certsdir
+| debugdef
+| revfile
 ;
 
 cafiledef: CAFILETOK QUOTE FILENAME QUOTE
@@ -77,9 +81,28 @@ crlfile: CRLFILETOK QUOTE FILENAME QUOTE
     crlfile = $3;
 }
 
+revfile: REVFILETOK QUOTE FILENAME QUOTE
+{
+    revfile = $3;
+}
+
 libexecpath: LIBEXECP QUOTE FILENAME QUOTE
 {
     libexec_path = $3;
+}
+
+updstoragepath: UPDSTORAGEP QUOTE FILENAME QUOTE
+{
+    upd_storage_path = $3;
+}
+
+certsdir: CERTSDIR QUOTE FILENAME QUOTE
+{
+    certsdir = $3;
+}
+debugdef: DEBUGTOK
+{
+    debug_print = 1;
 }
 
 %%

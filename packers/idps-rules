@@ -1,0 +1,54 @@
+#!/bin/bash
+# Create and push snort rules update
+# To be ran by cron bi-hourly
+
+. `dirname $0`/packers-lib
+
+TYPE=idps-rules
+DBPATH=$APDP_BASE/$TYPE
+
+for CF in `ls $DBPATH/*.cf`; do
+	CHANNEL=`basename $CF .cf`
+	RDIR=$DBPATH/$CHANNEL
+	CVER=`cat ${CF}`
+	TARGET=$APDS_BASE/$TYPE/$CHANNEL
+
+	UPVER=`wget -q -O - http://rules.emergingthreats.net/open/suricata/version.txt`
+	if [ "x$UPVER" == "x" ]; then
+		echo "Failed to fetch update version info for $CF"
+		clean_tmpd
+		exit 1
+	fi
+	if [ "$UPVER" -eq "$CVER" ]; then
+		continue
+	fi
+	lock $TARGET
+	if [ ! -f $TMPD/emerging.rules.tar.gz ]; then
+		wget -q -c -O $TMPD/emerging.rules.tar.gz http://rules.emergingthreats.net/open/suricata/emerging.rules.tar.gz
+		if [ "$?" != "0" ]; then
+			echo "Failed to fetch emerging.rules.tar.gz"
+			clean_tmpd
+			exit 2
+		fi
+	fi
+	tar xzf $TMPD/emerging.rules.tar.gz -C $TMPD/
+	mkdir $TMPD/snort
+	[ "${CHANNEL%.*}" = "1.0" ] && cp -a $RDIR $TMPD/patched
+	mkdir -p $TMPD/patched
+	mv $TMPD/rules/* $TMPD/patched/
+	create_delta $RDIR $TMPD/patched $TMPD/snort
+	LIST=`ls $TMPD/snort`
+	if [ "x$LIST" != "x" ]; then
+		tar czf $TMPD/snort.tar.gz -C $TMPD snort
+		sign_and_push $TMPD/snort.tar.gz bases
+		rm -fr $RDIR
+		mv $TMPD/patched $RDIR
+		echo "$UPVER" > $CF
+	fi
+	unlock $TARGET
+	rm -fr $TMPD/snort $TMPD/rules $TMPD/patched
+done
+
+clean_tmpd
+
+exit 0

@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
+#include <syslog.h>
 #include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -21,7 +22,6 @@
 #include "apds_proto.h"
 #include "apds_cache_db.h"
 #include "apds_config.h"
-#include "apdate_products.h"
 
 GCRY_THREAD_OPTION_PTHREAD_IMPL;
 
@@ -60,8 +60,12 @@ static int generate_rsa_params (void)
 }
 
 char *upddb, *port, *keyfile, *certfile, *cafile, *crlfile, *prodsfile;
-struct prcode_list *products;
 int debug_print = 0;
+unsigned int calist_size = 0;
+long int nr_cpus;
+gnutls_x509_crt_t *calist;
+gnutls_x509_crl_t *crl;
+pthread_barrier_t initbarrier;
 
 int main(int argc, char **argv) {
 	int err, listen_sd;
@@ -70,21 +74,28 @@ int main(int argc, char **argv) {
 	char *conffile_name;
 	int optval = 1;
 	pthread_t inotify_thread, fcache_thread;
+	pthread_attr_t pth_attr;
 	gnutls_datum_t fdata;
+	pid_t pid, sid;
+	FILE *pidf;
 
 	if (argc == 2)
 		conffile_name = argv[1];
 	else if (argc == 1)
 		conffile_name = APDSCONF;
 	else {
-		printf("Usage: apds [conffile]\n");
+		fprintf(stderr, "Usage: apds [conffile]\n");
 		exit(1);
 	}
 	
+	openlog("apds", 0, LOG_LOCAL1);
 	if (conf_parse(conffile_name) != 0) {
-		printf("Can't read config file '%s'\n", conffile_name);
+		fprintf(stderr, "Can't read config file '%s'\n", conffile_name);
+		syslog(LOG_ERR, "Can't read config file '%s'", conffile_name);
 		exit(2);
 	}
+
+	setlinebuf(stdout);
 
 	// libgcrypt init, pthread init and /dev/random disallowance
 	gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
@@ -95,29 +106,66 @@ int main(int argc, char **argv) {
 	if (gnutls_certificate_set_x509_trust_file(cert_cred, cafile,
 						   GNUTLS_X509_FMT_PEM) < 0) {
 		fprintf(stderr, "Can't load CA file (%s)\n", cafile);
+		syslog(LOG_ERR, "Can't load CA file (%s)", cafile);
 		exit(3);
 	}
 	if (gnutls_certificate_set_x509_crl_file(cert_cred, crlfile,
 						 GNUTLS_X509_FMT_PEM) < 0) {
 		fprintf(stderr, "Can't load CRL file (%s)\n", crlfile);
+		syslog(LOG_ERR, "Can't load CRL file (%s)", crlfile);
 		exit(4);
 	}
 	if (gnutls_certificate_set_x509_key_file(cert_cred, certfile, keyfile,
 				 GNUTLS_X509_FMT_PEM) != GNUTLS_E_SUCCESS) {
 		fprintf(stderr, "Can't load server key/cert (%s/%s)\n", keyfile,
 			certfile);
+		syslog(LOG_ERR, "Can't load server key/cert (%s/%s)\n", keyfile,
+			certfile);
 		exit(5);
 	}
-	fdata = load_file(prodsfile);
-	products = apdate_parse_product_list((char *) fdata.data, fdata.size);
-	if (products == NULL) {
-		fprintf(stderr, "Can't load products file (%s)\n", prodsfile);
-		exit(8);
+	calist = load_calist(cafile, &calist_size);
+	if (calist == NULL) {
+		fprintf(stderr, "Error loading CA list\n");
+		syslog(LOG_ERR, "Error loading CA list");
+		exit(98);
 	}
-	generate_dh_params ();
-	generate_rsa_params ();
-	gnutls_certificate_set_dh_params (cert_cred, dh_params);
-	gnutls_certificate_set_rsa_export_params (cert_cred, rsa_params);
+	crl = load_crl(crlfile);
+	if (crl == NULL) {
+		syslog(LOG_ERR, "Error loading CRL");
+		fprintf(stderr, "Error loading CRL\n");
+		exit(99);
+	}
+
+        /* Daemonize */
+        pid = fork();
+        if (pid < 0) {
+		fprintf(stderr, "Failed to fork()");
+		syslog(LOG_ERR, "Failed to fork()");
+                exit(11);
+        }
+	/* Parent */
+        if (pid > 0) {
+                exit(0);
+        }
+        sid = setsid();
+        if (sid < 0) {
+		fprintf(stderr, "Failed to setsid()");
+		syslog(LOG_ERR, "Failed to setsid()");
+                exit(22);
+        }
+        if ((chdir("/")) < 0) {
+		fprintf(stderr, "Failed to chdir to root");
+		syslog(LOG_ERR, "Failed to chdir to root");
+                exit(33);
+        }
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+
+	generate_dh_params();
+	generate_rsa_params();
+	gnutls_certificate_set_dh_params(cert_cred, dh_params);
+	gnutls_certificate_set_rsa_export_params(cert_cred, rsa_params);
 	cache_db_global_init();
 	apds_init_pthread_keys();
 
@@ -125,8 +173,25 @@ int main(int argc, char **argv) {
 	 * Disable SIGPIPE, no other way to handle connection breakages
 	 */
 	signal(SIGPIPE, SIG_IGN);
-	pthread_create(&inotify_thread, NULL, apds_inotify_thread, NULL);
-	pthread_create(&fcache_thread, NULL, apds_fcache_thread, NULL);
+
+	if ((pthread_attr_init(&pth_attr) != 0) || pthread_attr_setdetachstate(&pth_attr, PTHREAD_CREATE_DETACHED) != 0) {
+		fprintf(stderr, "Failed to init pthread attributes\n");
+		syslog(LOG_ERR, "Failed to init pthread attributes");
+		exit(34);
+	}
+	pthread_barrier_init(&initbarrier, NULL, 3);
+	pthread_create(&inotify_thread, &pth_attr, apds_inotify_thread, NULL);
+	pthread_create(&fcache_thread, &pth_attr, apds_fcache_thread, NULL);
+
+	pthread_barrier_wait(&initbarrier);
+	pthread_barrier_destroy(&initbarrier);
+	nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	/*
+	 * If the system fails to give the number of cpu's fallback to something
+	 * large enough to effectively disable load throttling
+	 */
+	if (nr_cpus <= 0)
+		nr_cpus = 1024;
 
 	listen_sd = socket (AF_INET, SOCK_STREAM, 0);
 	SOCKET_ERR (listen_sd, "socket");
@@ -141,15 +206,24 @@ int main(int argc, char **argv) {
 	err = listen (listen_sd, 1024);
 	SOCKET_ERR (err, "listen");
 
+	pidf = fopen("/var/run/apds.pid", "w");
+	if (pidf == NULL) {
+		syslog(LOG_ERR, "Can't open pid file");
+	} else {
+		pid = getpid();
+		if (fprintf(pidf, "%llu\n", (unsigned long long int) pid) < 0)
+			syslog(LOG_ERR, "Can't write to pid file");
+		if (fclose(pidf) != 0)
+			syslog(LOG_ERR, "Can't close pid file");
+	}
 	for (;;) {
 		struct sess_sd *ssd;
-		pthread_t *thread;
+		pthread_t thread;
+		int perr;
 
 		ssd = malloc(sizeof(struct sess_sd));
-		thread = malloc(sizeof(pthread_t));
 		client_len = sizeof(ssd->sa);
 
-		ssd->upd_dir_path = upddb;
 		gnutls_init (&ssd->sess, GNUTLS_SERVER);
 		gnutls_priority_set_direct (ssd->sess, "EXPORT", NULL);
 		gnutls_credentials_set (ssd->sess, GNUTLS_CRD_CERTIFICATE, cert_cred);
@@ -158,7 +232,11 @@ int main(int argc, char **argv) {
 		cache_db_session_init(&ssd->sess);
 
 		ssd->sd = accept(listen_sd, (struct sockaddr *) &ssd->sa, &client_len);
-		pthread_create(thread, NULL, apds_proto_thread, (void *) ssd);
+		perr = pthread_create(&thread, &pth_attr, apds_proto_thread, (void *) ssd);
+		if (perr != 0) {
+			syslog(LOG_ERR, "Can't create thread to serve client: %s", strerror(perr));
+			close(ssd->sd);
+		}
 	}
 	close (listen_sd);
 	cache_db_deinit();

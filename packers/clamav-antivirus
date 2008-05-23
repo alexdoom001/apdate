@@ -1,0 +1,38 @@
+#!/bin/bash
+# Create and push ClamAV DB update
+# To be ran by cron hourly
+
+. `dirname $0`/packers-lib
+
+TYPE=clamav-antivirus
+DBPATH=$APDP_BASE/$TYPE
+CLAMUP=/var/lib/clamav
+
+for CHANNEL in `ls -1 $DBPATH/`; do
+	RDIR=$DBPATH/$CHANNEL
+	TARGET=$APDS_BASE/$TYPE/$CHANNEL
+
+	lock $TARGET
+
+	set -e
+	freshclam --quiet
+	mkdir $TMPD/clamav
+	create_delta $RDIR $CLAMUP $TMPD/clamav
+	LIST=`ls $TMPD/clamav`
+	if [ "x$LIST" != "x" ]; then
+		tar czf $TMPD/clamav.tar.gz -C $TMPD clamav
+		sign_and_push $TMPD/clamav.tar.gz bases
+		rm -fr $RDIR
+		cp -a $CLAMUP $RDIR
+		mkdir $TMPD/all
+		cp -a $CLAMUP $TMPD/all/
+		install -m 0755 `dirname $0`/bases-all-runs/$TYPE $TMPD/all/run
+		tar czf $TMPD/clamav.tar.gz -C $TMPD/all clamav run
+		sign_and_push $TMPD/clamav.tar.gz bases-all
+	fi
+	rm -fr $TMPD/clamav 
+	unlock $TARGET
+	set +e
+done
+
+exit 0

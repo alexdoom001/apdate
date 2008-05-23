@@ -1,6 +1,8 @@
 /usr/bin
 /etc/apdp
 /usr/lib/apdp
-/var/db/apds/apdates
-/var/db/apdp/SPAMASSASSIN
-/var/db/apdp/SNORT
+/var/lib/apds/
+/var/lib/apdp/clamav-antivirus/0.96.5
+/var/lib/apdp/idps-rules/1.0.3
+/var/lib/apdp/spamassassin-antispam/3.3.1
+/var/lib/apdp/web-blacklists/1.0

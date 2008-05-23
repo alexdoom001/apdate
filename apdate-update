@@ -1,0 +1,33 @@
+#!/bin/sh
+[ "x$1" = "xrestore" ] && exit 0
+
+/etc/init.d/populate-volatile.sh start
+/etc/init.d/udev start
+/etc/init.d/syslog-ng start
+
+UPD_FLAG="/etc/.update_on_reboot"
+UPD_STORAGE=`cat /etc/apdc/apdc.conf | grep -E '^upd_storage_path' | cut -d'"' -f2`
+[ -z "$UPD_STORAGE" ] && UPD_STORAGE='/cfg/apdate/'
+LIBEXEC=`cat /etc/apdc/apdc.conf | grep -E '^libexec_path' | cut -d'"' -f2`
+APDA="${LIBEXEC}apda"
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if [ -d $UPD_STORAGE -a -f $UPD_FLAG ]; then
+	/etc/init.d/populate-volatile.sh
+	#Restore all existing backups first
+	/etc/init.d/apdc-recovery
+	for i in ${UPD_STORAGE}/apdate_*; do
+		[ -f $i ] || continue
+		echo  -n "Apply update $i...			"
+		$APDA apply $i && echo Ok && rm -f $i || echo Fail
+	done
+fi
+
+/etc/init.d/apdc-recovery
+
+rm -f ${UPD_STORAGE}/*
+rm -f $UPD_FLAG
+
+/etc/init.d/syslog-ng stop
+
+/sbin/reboot -f

@@ -1,0 +1,97 @@
+#!/bin/bash
+
+DBPATH=`cat /etc/apdc/apdc.conf 2>/dev/null | grep db_path | grep -o \".*\" | tr -d \"`
+# unpackers are used in packers
+if [ "x$DBPATH" = "x" ]; then
+	DBPATH=`cat /etc/apdp/apdc.conf 2>/dev/null | grep db_path | grep -o \".*\" | tr -d \"`
+fi
+if [ "x$DBPATH" = "x" ]; then
+	echo "ERROR: Can't determine DBPATH"
+	exit 2
+fi
+	
+
+apply_delta() {
+	local DIR=$1
+	local DELTA=$2
+	local TMPDELTA=`mktemp -d $TMPD/delta-XXXXXX`
+	local i=0
+
+	if [ "x$BACKUP" != "x" ]; then
+		touch $BACKUP/.$PRODUCT
+		for i in `find $DELTA -type f`; do
+			fdir=`dirname $i | sed "s,$DELTA,,"`
+			fpath=`basename $i .vcdiff`
+			if [ ! -d $BACKUP/$DIR/$fdir ]; then
+				mkdir -p $BACKUP/$DIR/$fdir
+			fi
+			if [ -f $DIR/$fdir/$fpath ]; then
+				cp -a $DIR/$fdir/$fpath $BACKUP/$DIR/$fdir/$fpath
+			fi
+			size=`ls -l $i | awk '{print $5}'`
+			if [ "$size" != "0" ]; then
+				touch $BACKUP/$DIR/$fdir/$fpath
+			fi
+		done
+		touch $BACKUP/.done
+	fi
+			
+	for i in `find $DELTA -type f`; do
+		fdir=`dirname $i | sed "s,$DELTA,,"`
+		fpath=`basename $i .vcdiff`
+		fvcd=`basename $i`
+		mkdir -p $TMPDELTA/$fdir
+		if [ "x$fpath" != "x$fvcd" ]; then
+			xdelta3 decode -q -c -s $DIR/$fdir/$fpath $i > $TMPDELTA/$fdir/$fpath && mv $TMPDELTA/$fdir/$fpath $DIR/$fdir/$fpath
+		else
+			size=`ls -l $i | awk '{print $5}'`
+			if [ "$size" == "0" ]; then
+				rm -fr $DIR/$fdir/$fpath
+			else
+				mkdir -p $DIR/$fdir
+				mv $i $DIR/$fdir/$fpath
+			fi
+		fi
+	done
+}
+
+std_backup_restore()
+{
+	for i in $DBPATH/backup-*/.$PRODUCT; do
+		if [ ! -f "$i" ]; then break; fi
+		BACKUP=`dirname $i`
+		if [ -f $BACKUP/.done ]; then
+			cp -a $BACKUP/* /
+			find $BACKUP -type f -size 0 | sed "s,$BACKUP,," | xargs rm -f
+		fi
+		rm -f $i/.$PRODUCT
+		sync
+		rm -fr $BACKUP &
+	done
+}
+
+check_unpack_space()
+{
+	[ -f "$1" ] || return 1
+	[ -d "$2" ] || return 1
+	local archive="$1"
+	local dir="$2"
+	local arsize=`stat -c %s "$archive"`
+	local fssize=`df -B1 "$dir" | tail -1 | awk '{print $4}'`
+	[ "$((arsize * 3))" -le "$fssize" ] && return 0
+	echo "No free space"
+	return 1
+}
+
+check_delta_space()
+{
+	[ -d "$1" ] || return 1
+	[ -d "$2" ] || return 1
+	local delta="$1"
+	local dir="$2"
+	local delsize=`du -sk "$delta" | cut -f1`
+	local fssize=`df -B1 "$dir" | tail -1 | awk '{print $4}'`
+	[ "$((delsize * 1024))" -le "$fssize" ] && return 0
+	echo "No free space"
+	return 1
+}

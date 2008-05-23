@@ -1,0 +1,144 @@
+#!/bin/bash
+# Create and push squidguard blacklist update
+# To be ran by cron once a day
+
+. `dirname $0`/packers-lib
+
+TYPE=web-blacklists
+DBPATH=$APDP_BASE/$TYPE
+
+url_fetch() {
+	fn=`basename $1`
+	if [ ! -f $TMPD/$fn ]; then
+		wget -q -c -O $TMPD/$fn $1
+		if [ "$?" != "0" ]; then
+			echo "Failed to fetch $fn"
+			clean_tmpd
+			exit 2
+		fi
+		tar xzf $TMPD/$fn -C $TMPD/
+	fi
+}
+
+for CHANNEL in `ls -1 $DBPATH/`; do
+	RDIR=$DBPATH/$CHANNEL
+	TARGET=$APDS_BASE/$TYPE/$CHANNEL
+
+	lock $TARGET
+	# No version information is provided by upstream authors, so just build
+	# a new DB and make a diff
+	UP_DB=$TMPD/upstream/blacklists
+	if [ ! -d $UP_DB ]; then
+		mkdir -p $UP_DB
+		url_fetch http://squidguard.mesd.k12.or.us/blacklists.tgz
+		# Useless tiny categories, still can't just drop 'em
+		rm -fr $TMPD/blacklists/aggressive/*
+		rm -fr $TMPD/blacklists/violence/*
+		# Broken category
+		rm -fr $TMPD/blacklists/ads/*
+		
+		# Mix categories
+		# proxy is a 90% subset of redirector, move all to proxy
+		for file in domains urls; do
+			cat "$TMPD/blacklists/proxy/${file}" "$TMPD/blacklists/redirector/${file}" 2>/dev/null | sort | uniq > $TMPD/$file
+			mv $TMPD/${file} $TMPD/blacklists/proxy/${file}
+			rm $TMPD/blacklists/redirector/${file}
+		done
+		mv $TMPD/blacklists/* $UP_DB
+		rm -fr $TMPD/blacklists
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/adult.tar.gz
+		# Don't create separate category for this kind of stuff
+		mv $TMPD/adult $TMPD/porn
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/audio-video.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/chat.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/dating.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/filehosting.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/hacking.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/gambling.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/drogue.tar.gz
+		# Don't create separate category for this kind of stuff
+		mv $TMPD/drogue $TMPD/drugs
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/phishing.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/redirector.tar.gz
+		# Don't create separate category for this kind of stuff
+		mv $TMPD/redirector $TMPD/proxy
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/social_networks.tar.gz
+		# dash is a bit more user-friendly character
+		mv $TMPD/social_networks $TMPD/social-networks
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/warez.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/games.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/malware.tar.gz
+		url_fetch ftp://ftp.univ-tlse1.fr/pub/reseau/cache/squidguard_contrib/webmail.tar.gz
+		# Don't create separate category for this kind of stuff
+		mv $TMPD/webmail $TMPD/mail
+		# Compat
+		mkdir $TMPD/adult
+		mkdir $TMPD/drogue
+		for i in porn audio-video chat dating filehosting hacking gambling drugs phishing proxy social-networks warez games malware mail; do
+			if [ -d "$UP_DB/$i" ]; then
+				for file in `ls -1 "$TMPD/${i}"`; do
+					cat "${TMPD}/${i}/${file}" "${UP_DB}/${i}/${file}" 2>/dev/null | sort | uniq > $TMPD/$file
+					mv "$TMPD/${file}" "${UP_DB}/${i}/${file}"
+				done
+			else
+				mv "$TMPD/$i" $UP_DB/
+			fi
+		done
+		find "$UP_DB" -name usage -exec rm {} \;
+		# REJIK
+		REJD=/usr/local/rejik3/dbl/lists
+#		/root/rejik/dbl/Update
+		/root/rejik/dbl/dbl_expand /usr/local/rejik3/dbl/list.dbl
+		mkdir $TMPD/rej
+		for cat in audio-video avto-moto banner chats dating extremism_rf icq online-games phishing photogallery porno socnet spyware torrents virus-detect warez web-mail web-proxy; do
+			mkdir -p $TMPD/rej/$cat
+			if [ -e $REJD/$cat.pcre ]; then
+				cat $REJD/$cat.pcre > $TMPD/rej/$cat/expressions
+			fi
+			cat $REJD/$cat.urls | grep -v "/" > $TMPD/rej/$cat/domains
+			cat $REJD/$cat.urls | grep "/" | grep -E "(\.[a-zA-Z0-9#_-]{1,4}$)|\?" > $TMPD/rej/$cat/urls
+			cat $REJD/$cat.urls | grep "/" | grep -v -E "(\.[a-zA-Z0-9#_-]{1,4}$)|\?" | sed "s,$,/," >> $TMPD/rej/$cat/urls
+		done
+		# Renaming
+		mv $TMPD/rej/avto-moto $TMPD/rej/automotive
+		mv $TMPD/rej/chats $TMPD/rej/chat
+		mv $TMPD/rej/extremism_rf $TMPD/rej/extremism-ru
+		mv $TMPD/rej/online-games $TMPD/rej/games
+		mv $TMPD/rej/porno $TMPD/rej/porn
+		mv $TMPD/rej/socnet $TMPD/rej/social-networks
+		mv $TMPD/rej/web-mail $TMPD/rej/mail
+		mv $TMPD/rej/web-proxy $TMPD/rej/proxy
+		for i in audio-video automotive banner chat dating extremism-ru icq games phishing photogallery porn social-networks spyware torrents virus-detect warez mail proxy; do
+			if [ -d "$UP_DB/$i" ]; then
+				for file in `ls -1 "$TMPD/rej/${i}"`; do
+					cat "${TMPD}/rej/${i}/${file}" "${UP_DB}/${i}/${file}" 2>/dev/null > $TMPD/$file
+					mv "$TMPD/${file}" "${UP_DB}/${i}/${file}"
+				done
+			else
+				mv "$TMPD/rej/$i" $UP_DB/
+			fi
+		done
+		# Sanitize domain lists
+		for i in audio-video automotive banner chat dating drugs extremism-ru filehosting gambling games hacking icq mail malware phishing photogallery porn proxy social-networks spyware suspect torrents virus-detect warez; do
+			# Deduplication and garbage cleaning
+			# Domains have dots and don't have strange symbols or strange dots placement
+			cat "${UP_DB}/${i}/domains" | tr "[:upper:]" "[:lower:]" | sort | uniq | \
+				grep \\. | grep -v -E '[/+&\\$^]' | grep -v -E '\.$' | \
+				grep -v -E '^\.' | grep -v -E '\.\.' > ${UP_DB}/${i}/domainsclean
+		done
+	fi
+	mkdir $TMPD/blacklists
+	create_delta $RDIR $UP_DB $TMPD/blacklists
+
+	LIST=`find $TMPD/blacklists -type f`
+	if [ "x$LIST" != "x" ]; then
+		tar czf $TMPD/blacklists.tar.gz -C $TMPD blacklists
+		sign_and_push $TMPD/blacklists.tar.gz bases
+		rm -fr $RDIR
+		cp -a $UP_DB $RDIR
+	fi
+	rm -fr $TMPD/blacklists
+	unlock $TARGET
+done
+
+exit 0

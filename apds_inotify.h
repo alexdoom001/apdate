@@ -17,7 +17,7 @@ struct wd_subs {
 #define C_SUBLIST_SIZE(i) (sizeof(int) * wd_list[i].subscribers_count)
 
 int inotify_sub(const char *path);
-int inotify_unsub(const int rd_pipe);
+int inotify_unsub(int req_i);
 void *apds_inotify_thread(void *smth);
 
 #endif

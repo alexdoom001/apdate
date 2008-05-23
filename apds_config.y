@@ -1,6 +1,7 @@
 %{
 #include <stdio.h>
 #include <string.h>
+#include <syslog.h>
 
 #define YYSTYPE char *
     
@@ -11,7 +12,7 @@
     
     void yyerror(const char *str)
     {
-	fprintf(stderr, "config error: %s\n", str);
+	syslog(LOG_ERR, "config error: %s\n", str);
     }
 
     int yywrap()

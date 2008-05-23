@@ -1,0 +1,65 @@
+#!/bin/bash
+# Apply ClamAV update
+
+. `dirname $0`/unpackers-lib
+
+DBDIR=/var/lib/clamav
+SERVICE=clamav-daemon
+PRODUCT=clamav
+
+cmd=$1
+
+patch_apply()
+{
+	TMPD=`mktemp -d /tmp/apdc-XXXXXX`
+	BACKUP=`mktemp -d $DBPATH/backup-XXXXXX`
+
+	set -e
+	check_unpack_space "$patch" "$TMPD"
+	cd $TMPD && zcat $patch | tar -x
+	rm -f $patch
+	check_delta_space "$TMPD/clamav" "$DBDIR"
+	if ! [ -f $TMPD/run ]; then
+		apply_delta $DBDIR $TMPD/clamav
+		chown -R clamav:clamav $DBDIR
+	else
+		cd $TMPD
+		export APDATE_TMPD=$TMPD
+		sudo -E /bin/bash $TMPD/run
+	fi
+	set +e
+	clammem=`ps -C clamd -o rss --no-heading | awk '{s+=$1}END{print s}'`
+	[ -z "$clammem" ] && clammem=0
+	freemem=`free | sed -n 3p | awk '{print $4}'`
+	if [ "$freemem" -gt "$((clammem*12/10))" ]; then
+		# Reload DBs in ClamAV
+		killall -USR2 clamd
+	else
+		#ClamAV uses more memory if bases grow. Let's use 1,2 coefficient.
+		#We have not enough memory => report about it
+		logger -t clamd -p local1.warning \
+		  "No free mem for ClamAV update"
+	fi
+	ionice -c 3 nice rm -fr $TMPD $BACKUP &
+}
+
+case $cmd in
+	apply)
+		patch=$2
+		if [ ! -f $patch ]; then
+			echo "Bad patch file passed"
+			exit 25
+		fi
+
+		patch_apply
+		;;
+	restore)
+		std_backup_restore
+		;;
+	*)
+		echo "Usage: $0 [apply|restore]"
+		exit 3
+		;;
+esac
+
+exit 0

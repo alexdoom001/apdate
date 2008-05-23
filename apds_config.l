@@ -12,11 +12,10 @@ key_file                return KEYFILE;
 certificate_file        return CERTFILE;
 ca_file                 return CAFILE;
 crl_file                return CRLFILE;
-products_file           return PRODSFILE;
 debug                   return DEBUG;
 [0-9]+                  yylval=strdup(yytext); return NUMBER;
-[a-zA-Z0-9\/. -]+       yylval=strdup(yytext); return FILENAME;
 \"                      return QUOTE;
+[a-zA-Z0-9\/_][a-zA-Z0-9\/\._-]*       yylval=strdup(yytext); return FILENAME;
 \n                      return EOL;
 [ \t]+                  /* ignore whitespace */;
 %%

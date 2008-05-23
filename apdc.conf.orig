@@ -1,5 +1,0 @@
-ca_file			"/etc/apdc/ca.pem"
-cert_file		"/etc/apdc/cert.pem"
-key_file		"/etc/apdc/key.pem"
-db_path			"/var/db/apdc"
-apdate_servers		"update.example.com apdate.example.com 127.0.0.1"

@@ -9,8 +9,7 @@
 update_db_path          return UPDDBPATH;
 key_file                return KEYFILE;
 certificate_file        return CERTFILE;
-products_file           return PRODFILE;
-[a-zA-Z0-9\/. -]+       yylval=strdup(yytext); return FILENAME;
+[a-zA-Z0-9\/_][a-zA-Z0-9\/\._-]*        yylval=strdup(yytext); return FILENAME;
 \"                      return QUOTE;
 \n                      return EOL;
 [ \t]+                  /* ignore whitespace */;

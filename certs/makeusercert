@@ -1,0 +1,30 @@
+#!/bin/sh
+
+MACHINE=$1
+PRODUCT=$2
+SERIAL=$3
+
+if [ "x$MACHINE" = "x" -o "x$PRODUCT" = "x" -o "x$SERIAL" = "x" ]; then
+	echo "Usage: makeusercert machine product serial"
+	exit 1
+fi
+
+cat user-carrier.cfg | sed -r "s,^dn_oid.*,dn_oid = \"2.5.4.5\" \"$SERIAL\" \"2.5.4.42\" \"$PRODUCT\" \"2.5.4.46\" \"carrier\"," > tmp.cfg
+
+certtool --generate-privkey --bits 2048 --outfile user-carrier-key.pem
+certtool --generate-certificate --load-privkey user-carrier-key.pem --outfile user-carrier-cert.pem --load-ca-certificate ucertgen-cert.pem --load-ca-privkey ucertgen-key.pem --template tmp.cfg
+cat ucertgen-cert.pem >> user-carrier-cert.pem
+
+cat user-bases.cfg | sed -r "s,^dn_oid.*,dn_oid = \"2.5.4.5\" \"$SERIAL\" \"2.5.4.42\" \"$PRODUCT\" \"2.5.4.46\" \"bases\"," > tmp.cfg
+
+certtool --generate-privkey --bits 2048 --outfile user-bases-key.pem
+certtool --generate-certificate --load-privkey user-bases-key.pem --outfile user-bases-cert.pem --load-ca-certificate ucertgen-cert.pem --load-ca-privkey ucertgen-key.pem --template tmp.cfg
+cat ucertgen-cert.pem >> user-bases-cert.pem
+
+cat user-sw.cfg | sed -r "s,^dn_oid.*,dn_oid = \"2.5.4.5\" \"$SERIAL\" \"2.5.4.42\" \"$PRODUCT\" \"2.5.4.46\" \"software\"," > tmp.cfg
+
+certtool --generate-privkey --bits 2048 --outfile user-sw-key.pem
+certtool --generate-certificate --load-privkey user-sw-key.pem --outfile user-sw-cert.pem --load-ca-certificate ucertgen-cert.pem --load-ca-privkey ucertgen-key.pem --template tmp.cfg
+cat ucertgen-cert.pem >> user-sw-cert.pem
+
+rm tmp.cfg

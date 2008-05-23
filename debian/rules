@@ -49,6 +49,7 @@ apds: build install
 	dh_installexamples -a -p$@
 	dh_install --package=$@ ${BUILDDIR}/usr/bin/apds usr/bin/
 	dh_install --package=$@ ${BUILDDIR}/etc/apds/* etc/apds/
+	dh_install --package=$@ ${BUILDDIR}/etc/init.d/apds etc/init.d/
 	dh_link -a -p$@
 	dh_strip -a -p$@
 	dh_compress -a -p$@
@@ -68,6 +69,7 @@ apdp: build install
 	dh_install --package=$@ ${BUILDDIR}/usr/bin/apdp usr/bin/
 	dh_install --package=$@ ${BUILDDIR}/etc/apdp/* etc/apdp/
 	dh_install --package=$@ ${BUILDDIR}/usr/lib/apdp/* usr/lib/apdp/
+	dh_install --package=$@ ${BUILDDIR}/etc/init.d/apds-verificator etc/init.d/
 	dh_link -a -p$@
 	dh_strip -a -p$@
 	dh_compress -a -p$@

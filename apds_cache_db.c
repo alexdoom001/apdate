@@ -11,7 +11,7 @@
 #include "apds_cache_db.h"
 #include "apds_main.h"
 
-pthread_mutex_t cache_db_mut;
+pthread_mutex_t cache_db_mut = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
 	char session_id[MAX_SESSION_ID_SIZE];
@@ -25,8 +25,7 @@ static int cache_db_ptr = 0;
 
 void cache_db_global_init() {
 	/* allocate cache_db */
-	cache_db = calloc (1, TLS_SESSION_CACHE * sizeof (CACHE));
-	pthread_mutex_init(&cache_db_mut, NULL);
+	cache_db = calloc(TLS_SESSION_CACHE, sizeof(CACHE));
 }
 
 void cache_db_session_init(gnutls_session_t *session) {
@@ -50,10 +49,10 @@ int cache_db_store(void *dbf, gnutls_datum_t key, gnutls_datum_t data) {
 	if (data.size > MAX_SESSION_DATA_SIZE)
 		return -1;
 	pthread_mutex_lock(&cache_db_mut);
-	memcpy (cache_db[cache_db_ptr].session_data, data.data, data.size);
+	memcpy(cache_db[cache_db_ptr].session_data, data.data, data.size);
 	cache_db[cache_db_ptr].session_data_size = data.size;
 	cache_db[cache_db_ptr].session_id_size = key.size;
-	memcpy (cache_db[cache_db_ptr].session_id, key.data, key.size);
+	memcpy(cache_db[cache_db_ptr].session_id, key.data, key.size);
 	cache_db_ptr++;
 	cache_db_ptr %= TLS_SESSION_CACHE;
 	pthread_mutex_unlock(&cache_db_mut);
@@ -87,15 +86,15 @@ int cache_db_delete (void *dbf, gnutls_datum_t key) {
 	int i;
 	if (cache_db == NULL)
 		return -1;
-	for (i = 0; i < TLS_SESSION_CACHE; i++) {
+	pthread_mutex_lock(&cache_db_mut);
+	for (i = 0; i < TLS_SESSION_CACHE; i++)
 		if (key.size == cache_db[i].session_id_size &&
-		    memcmp (key.data, cache_db[i].session_id, key.size) == 0) {
-			pthread_mutex_lock(&cache_db_mut);
+		    memcmp(key.data, cache_db[i].session_id, key.size) == 0) {
       			cache_db[i].session_id_size = 0;
 			cache_db[i].session_data_size = 0;
 			pthread_mutex_unlock(&cache_db_mut);
 			return 0;
 		}
-	}
+	pthread_mutex_unlock(&cache_db_mut);
 	return -1;
 }

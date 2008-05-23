@@ -3,19 +3,28 @@
 
 #include <byteswap.h>
 #include <gnutls/gnutls.h>
+#include <stdint.h>
 
 #define APDS_DEF_PORT 790
 #define MAX_BUF 1024
 #define DH_BITS 1024
 #define TMP_PREFIX "/tmp/"
-#define TMP_FILE_PATTERN TMP_PREFIX "apdc-upXXXXXX"
-#define TMP_DIR_PATTERN TMP_PREFIX "apdp-XXXXXX"
+#define TMP_FILE_PATTERN TMP_PREFIX "apdate-XXXXXX"
+#define TMP_DIR_PATTERN TMP_PREFIX "apdate-d-XXXXXX"
 
-#define SOCKET_ERR(err,s) if(err==-1) {perror(s);return(1);}
+#define APDATE_DB_DIR "/cfg/apdate/"
+
+#define SOCKET_ERR(err,s) if(err==-1) {syslog(LOG_ERR, "%s: %s", s, strerror(errno)); return(1);}
 #define HANDLE_TLS_ERR if (ret < 0) { \
-	fprintf(stderr, "Error: %s\n", gnutls_strerror(ret)); \
+	syslog(LOG_ERR, "%s", gnutls_strerror(ret)); \
 	goto out_bye; \
 	}
+#define PTH_ID (long long int) pthread_self()
+#define THREAD_ERR(m) {					      \
+	syslog(LOG_ERR, "%lli: ERR: %s\n", PTH_ID, m); \
+	goto out_bye; \
+	}
+
 #define DEBUG(command) if (debug_print != 0) {command;}
 
 #ifndef be32toh
@@ -25,22 +34,32 @@
 #    define htobe64(i) (__BYTE_ORDER == __BIG_ENDIAN ? i : bswap_64(i))
 #endif
 
-struct string_code {
-	char *str;
-	int64_t code;
+#define APDATE_FILE_MAGIC "ApDaTE"
+
+struct up_prod {
+	char *prod;
+	char *ver;
+	uint64_t rev;
 };
 
-#define STRCODE_LIST_MEMSIZE(i) (i * sizeof(struct string_code))
+struct chan_rev {
+	char *channel;
+	uint64_t main;
+	uint64_t rev;
+	uint64_t state;
+};
+
+#define OIDBUF_SIZE 256
 
 gnutls_datum_t load_file(const char *file);
 void unload_file (gnutls_datum_t data);
-int get_file_lock(const char *name);
-void release_file_lock(const char *name, int fd);
-gnutls_x509_crt_t *load_certificate(const char *path);
+int load_certificate_ram(gnutls_x509_crt_t **crt, gnutls_datum_t data);
+int load_certificate(gnutls_x509_crt_t **crt, const char *path);
 gnutls_x509_privkey_t *load_privkey(const char *path);
 char *strconcat(const char *s1, const char *s2);
-struct string_code load_product_file(const char *fname);
-int64_t strcode_get_code(struct string_code *prlist, unsigned int lsize, char *name);
-char *strcode_get_name(struct string_code *prlist, unsigned int lsize, int64_t code);
+gnutls_x509_crl_t *load_crl(const char *path);
+gnutls_x509_crt_t *load_calist(const char *path, unsigned int *calist_size);
+char *get_cert_field_by_oid(gnutls_x509_crt_t crt, const char *oid, const int check);
+int check_cert_field(const char *str, size_t size);
 
 #endif

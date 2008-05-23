@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+#	/etc/init.d/apdc-recovery
+#
+# Recover previous update if failed for some reason
+#
+
+echo -n $"Checking update system: "
+DBP=`cat /etc/apdc/apdc.conf | grep db_path | sed -r 's,^db_path[[:space:]]+"(.*)"$,\1,'`
+LIBEX=`cat /etc/apdc/apdc.conf | grep libexec_path | sed -r 's,^libexec_path[[:space:]]+"(.*)"$,\1,'`
+
+if ls $DBP/backup-* >/dev/null 2>&1; then
+for i in $LIBEX/*; do
+	APP=`basename $i`
+	if [ "$APP" = "apda" -o "$APP" = "unpackers-lib" -o "$APP" = "apdate-update" ]; then
+		continue
+	else
+		$i restore
+	fi
+done
+rm -fr $DBP/backup-* &
+fi
+echo "OK."
+
+exit 0

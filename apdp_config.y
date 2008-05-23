@@ -4,7 +4,7 @@
 
 #define YYSTYPE char *
     
-    extern char *upddb, *keyfile, *certfile, *prodfile;
+    extern char *upddb, *keyfile, *certfile;
     extern FILE *yyin;
     extern int yylex(void);
     
@@ -19,7 +19,7 @@
     }
 %}
 
-%token EOL UPDDBPATH KEYFILE CERTFILE FILENAME QUOTE PRODFILE
+%token EOL UPDDBPATH KEYFILE CERTFILE FILENAME QUOTE
 %error-verbose
 
 %%
@@ -31,7 +31,6 @@ token: EOL
 | upddbdef
 | keyfiledef
 | certfiledef
-| productsdef
 ;
 
 upddbdef: UPDDBPATH QUOTE FILENAME QUOTE
@@ -45,10 +44,6 @@ keyfiledef: KEYFILE QUOTE FILENAME QUOTE
 certfiledef: CERTFILE QUOTE FILENAME QUOTE
 {
     certfile = $3;
-}
-productsdef: PRODFILE QUOTE FILENAME QUOTE
-{
-    prodfile = $3;
 }
 %%
 

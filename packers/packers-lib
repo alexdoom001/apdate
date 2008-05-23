@@ -1,0 +1,163 @@
+# Sets TMPD and some useful common functions
+
+TMPD=`mktemp -d /tmp/apdp-XXXXXX`
+CONFDIR=/etc/apdp
+MYDIR=`dirname $0`
+
+. $MYDIR/unpackers-lib
+
+APDP_BASE=/var/lib/apdp
+APDS_BASE=/var/lib/apds
+
+clean_tmpd() {
+	rm -fr $TMPD & </dev/null > /dev/null 2>&1
+}
+
+create_delta() {
+	local FROM=$1
+	local TO=$2
+	local OUT=$3
+
+	local FILE=
+	ls $TO | while read FILE; do
+		if [ ! -d $TO/$FILE ]; then
+			if ! cmp -s $FROM/$FILE $TO/$FILE; then
+				if [ -f $FROM/$FILE ]; then
+					xdelta3 encode -q -0 -s $FROM/$FILE $TO/$FILE $OUT/${FILE}.vcdiff || cp $TO/$FILE $OUT/
+				else
+					cp $TO/$FILE $OUT/
+				fi
+			fi
+		else
+			mkdir -p $OUT/$FILE
+			create_delta $FROM/$FILE $TO/$FILE $OUT/$FILE
+		fi
+	done
+	ls $FROM 2>/dev/null | while read FILE; do
+		if [ ! -e $TO/$FILE ]; then
+			touch $OUT/$FILE
+		fi
+	done
+	wait
+}
+
+lock() {
+	local FILE=`echo $1 | sed -r "s,/+$,,"`
+
+	local LOCKFILE=${FILE}.lock
+	local tries=0
+	while ! ln -s -T /proc/$$ $LOCKFILE >/dev/null 2>&1; do
+		local LN=`readlink $LOCKFILE`
+		if [ -d $LN ]; then
+			if [ $((tries++)) -gt 10 ]; then
+				echo "Waited for $FILE lock too long, aborting"
+				set -e
+				false
+			fi
+			sleep 60
+		else
+			echo "Stale $FILE lock found, removing"
+			rm -f $LOCKFILE
+		fi
+	done
+}
+
+unlock() {
+	local FILE=`echo $1 | sed -r "s,/+$,,"`
+
+	local LOCKFILE=${FILE}.lock
+	if [ `readlink $LOCKFILE` == /proc/$$ ]; then
+		rm -f $LOCKFILE
+	else
+		echo "Foreign lock file detected on unlock"
+	fi
+}
+
+get_db_revision() {
+	local TREV=$1
+	local REVTMP=$TMPD/revision-$TREV
+	local PATCHPATH=$APDS_BASE/patches/$TYPE/$CHANNEL
+
+	if [ ! -d $REVTMP ]; then
+		if ls $TMPD/revision-* >/dev/null 2>&1; then
+			for drev in `ls -d $TMPD/revision-* 2>/dev/null | sed "s,^$TMPD/,," | cut -d '-' -f 2 | sort -n -r`; do
+				if [ $drev -le $TREV ]; then
+					local rev=$drev
+					cp -a $TMPD/revision-$drev $REVTMP
+					break;
+				fi
+			done
+		fi
+		if [ ! -d $REVTMP ]; then
+			local rev=0
+			mkdir -p $REVTMP
+			if [ `ls $APDP_BASE/$TYPE/.$CHANNEL/ 2>/dev/null | wc -l` -ne 0 ]; then
+				cp -a $APDP_BASE/$TYPE/.$CHANNEL/* $REVTMP/
+			fi
+		fi
+       		while [ $rev -ne $TREV ]; do
+			for orev in `ls $PATCHPATH/$rev-* 2>/dev/null | sed "s,^$PATCHPATH/,," | cut -d '-' -f 2 | sort -n -r`; do
+				if [ $orev -le $TREV ]; then
+					break;
+				fi
+			done
+			tb=`$MYDIR/apda /etc/apdp/apdc.conf extract $PATCHPATH/$rev-$orev`
+			tbtmp=`mktemp -d $TMPD/delta-XXXXXX`
+			tar xf $tb -C $tbtmp
+			rm $tb &
+			find $tbtmp -maxdepth 1 -type f | while read rfile; do
+				cp $rfile $TMPD/work/
+			done
+			pdir=`find $tbtmp -maxdepth 1 -type d | sed "s,^$tbtmp,," | sed '/^$/d'`
+			set -e
+			apply_delta $REVTMP/$pdir $tbtmp/$pdir
+			set +e
+			nice rm -fr $tbtmp &
+			rev=$orev
+		done
+	fi
+}
+
+sign_and_push() {
+	local FILE=$1
+	local UTYPE=$2
+	local DESC=$3
+
+	if [ "x$DESC" = "x" ]; then
+		DESC=/dev/null
+	fi
+
+	REV=`ls $APDS_BASE/patches/$TYPE/$CHANNEL/ 2>/dev/null | cut -d '-' -f 2 | sort -n | tail -n 1`
+	if [ "x$REV" = "x" -o "x$REV" = "xhf" ]; then
+		REV=0
+	fi
+	if [ "x$UTYPE" = "xbases-all" ]; then
+		SREV=0
+		DESTREV=$REV
+	else
+		SREV=$REV
+		DESTREV=$((REV+1))
+	fi
+
+	AP=`apdp -f $FILE -t $TYPE -l $UTYPE -h $CHANNEL -r $SREV -d $DESTREV -e $DESC`
+	if [ "x$AP" == "x" ]; then
+		echo "Error signing apdate file"
+	else
+		if [ "x$UTYPE" != "xbases-all" ]; then
+			mv $AP $APDS_BASE/patches/$TYPE/$CHANNEL/$SREV-$DESTREV
+			ln -s ../../patches/$TYPE/$CHANNEL/$SREV-$DESTREV $APDS_BASE/$TYPE/$CHANNEL/$REV
+			if [ "x$UTYPE" = "xbases" ]; then
+				get_db_revision $DESTREV
+			fi
+		else
+			mv $AP $APDS_BASE/patches/$TYPE/$CHANNEL/all$DESTREV
+			ln -sf ../../patches/$TYPE/$CHANNEL/all$DESTREV $APDS_BASE/$TYPE/$CHANNEL/all
+		fi
+		cat $CONFDIR/apdp.externs | while read REMOTE; do
+			rsync -a $APDS_BASE/patches/$TYPE/$CHANNEL/ $REMOTE/patches/$TYPE/$CHANNEL/
+			rsync -a $APDS_BASE/$TYPE/$CHANNEL/ $REMOTE/$TYPE/$CHANNEL/
+		done
+	fi
+}
+
+trap 'clean_tmpd' INT TERM EXIT

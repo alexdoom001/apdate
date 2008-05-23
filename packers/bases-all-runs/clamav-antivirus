@@ -1,0 +1,4 @@
+#!/bin/bash
+
+rm -fr /var/lib/clamav/*
+mv clamav/* /var/lib/clamav/

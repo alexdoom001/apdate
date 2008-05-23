@@ -1,0 +1,48 @@
+#!/bin/sh
+set -e
+set -x
+MACHINE=$1
+PRODUCT=$2
+NUM=0090$3
+
+if [ "x$MACHINE" = "x" -o "x$PRODUCT" = "x" -o "x$3" = "x" ]; then
+	echo "Usage: mkclient machine product serial"
+	exit 1
+fi
+
+DIR=$PWD
+APDCDB=$DIR/client$NUM
+APDCCONF=$DIR/etc/apdc$NUM
+UPDSTORAGE=$DIR/apdate
+
+rm -fr $APDCDB
+rm -fr $APDCCONF
+mkdir -p $APDCDB
+mkdir -p $APDCCONF/certs
+
+cat ../apdc.conf | sed -r  -e "s,^apdate_servers.*,apdate_servers \"127.0.0.1:7900\"," \
+			-e "s,^db_path.*,db_path \"$APDCDB/\"," \
+			-e "s,^libexec_path.*,libexec_path \"$DIR/lib/apdc\"," \
+			-e "s,^upd_storage_path.*,upd_storage_path \"$DIR/apdate/\"," \
+			-e "s,/etc/apdc,$APDCCONF," > $APDCCONF/apdc.conf
+cp ../certs/ca-cert.pem $APDCCONF/ca.pem
+cp ../certs/crl.pem $APDCCONF/crl.pem
+cd ../certs
+./makeusercert "$MACHINE" "$PRODUCT" "$NUM"
+cd $DIR
+cp ../certs/user-carrier-cert.pem $APDCCONF/cert.pem
+cp ../certs/user-carrier-key.pem $APDCCONF/key.pem
+if echo "$PRODUCT" | grep -q -i base; then
+	cp ../certs/user-bases-cert.pem $APDCCONF/certs/
+fi
+cp ../certs/user-sw-cert.pem $APDCCONF/certs/
+../apdi -c $APDCCONF/apdc.conf -i $APDCDB/version.db
+if echo $PRODUCT | grep -q vyatta; then
+	../apdi -c $APDCCONF/apdc.conf -a vyatta-6.2-$MACHINE/base -d software
+	../apdi -c $APDCCONF/apdc.conf -a clamav-antivirus/0.96.5 -d bases
+	../apdi -c $APDCCONF/apdc.conf -a web-blacklists/1.0 -d bases
+	../apdi -c $APDCCONF/apdc.conf -a spamassassin-antispam/3.3.1 -d bases
+	../apdi -c $APDCCONF/apdc.conf -a idps-rules/1.0.3 -d bases
+	../apdi -c $APDCCONF/apdc.conf -a strange-thingie/1.0 -d bases
+	../apdi -c $APDCCONF/apdc.conf -a personal/$NUM -d personal
+fi

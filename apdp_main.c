@@ -2,64 +2,161 @@
  * Signs an update and puts it in update DB
  */
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <gnutls/gnutls.h>
 #include <gnutls/x509.h>
+#if (GNUTLS_VERSION_NUMBER >= 0x021200)
+#include <gnutls/abstract.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "apdate_file.h"
 #include "apdp_main.h"
 #include "apdate_common.h"
 #include "apdp_config.h"
-#include "apdate_version.h"
-#include "apdate_products.h"
 
-char *upddb, *keyfile, *certfile, *prodfile;
+char *upddb, *keyfile, *certfile;
 
 int main(int argc, char **argv)
 {
-	char *conffile_name, *updtar, *verdesc, *lockfile, *cmdline, *verf_name;
-	char *pname, *tmpdir;
-	char **lncmds;
-	char signature[SIGNATURE_SIZE];
-	int fdb_lock, i, ret;
-	FILE *verf, *signf;
-	time_t ctime;
-	size_t signature_size = SIGNATURE_SIZE;
-	gnutls_datum_t fdata;
+	char *conffile_name = APDPCONF, *updtar = NULL, *aptype = NULL;
+	char *pname, *revision = NULL, *dest_rev = NULL, *fmap, *channel = NULL, *descfile = NULL;
+	char c, version_tag = 1;
+	gnutls_datum_t fdata, outdata, certdata, descdata;
 	gnutls_x509_crt_t *crt;
 	gnutls_x509_privkey_t *key;
-	struct version_content *version;
-	struct prcode_list *products;
+#if (GNUTLS_VERSION_NUMBER >= 0x020c00)
+	gnutls_privkey_t newkey;
+#endif
+	int ret, ncerts, out, apfile, certfd, descfd = -1;
+	long int l;
+	uint32_t ui32, filetype = APDATE_TYPE_BASES;
+	uint64_t ui64;
+	gnutls_datum_t signature;
 
 	gnutls_global_init();
-	if (argc == 3) {
-		conffile_name = APDPCONF;
-		updtar = argv[1];
-		verdesc = argv[2];
-	} else if (argc == 4) {
-		conffile_name = argv[1];
-		updtar = argv[2];
-		verdesc = argv[3];
-	} else {
-		fprintf(stderr, "Usage: apdp [conffile] update version\n");
-		exit(1);
+	while ((c = getopt(argc, argv, "c:f:t:l:h:e:r:d:")) != -1)
+	       switch (c) {
+	       case 'c':
+		       conffile_name = optarg;
+		       break;
+	       case 'f':
+		       updtar = optarg;
+		       break;
+	       case 't':
+		       aptype = optarg;
+		       break;
+	       case 'l':
+		       if (strcmp(optarg, "sw") == 0)
+			       filetype = APDATE_TYPE_SOFTWARE;
+		       else if (strcmp(optarg, "hf") == 0)
+			       filetype = APDATE_TYPE_SOFTWARE_HF;
+		       else if (strcmp(optarg, "bases") == 0)
+			       filetype = APDATE_TYPE_BASES;
+		       else if (strcmp(optarg, "bases-all") == 0)
+			       filetype = APDATE_TYPE_BASES_ALL;
+		       else if (strcmp(optarg, "personal") == 0)
+			       filetype = APDATE_TYPE_PERSONAL;
+		       else {
+			       fprintf(stderr, "Unsupported -l parameter\n");
+			       exit(1);
+		       }
+		       break;
+	       case 'h':
+		       channel = optarg;
+		       break;
+	       case 'e':
+		       descfile = optarg;
+		       break;
+	       case 'r':
+		       revision = optarg;
+		       break;
+	       case 'd':
+		       dest_rev = optarg;
+		       break;
+	       case '?':
+		       switch (optopt) {
+		       case 'c':
+		       case 'f':
+		       case 'p':
+		       case 't':
+		       case 'l':
+		       case 'h':
+		       case 'e':
+		       case 'r':
+		       case 'd':
+			       fprintf(stderr, "-%c must have value.\n", optopt);
+			       break;
+		       default:
+			       if (isprint(optopt))
+				       fprintf(stderr, "Unknown parameter '-%c'.\n", optopt);
+			       else
+				       fprintf(stderr, "Unknow key '\\x%x'.\n", optopt);
+		       }
+		       /* Fallthrough */
+	       default:
+		       fprintf(stderr, "Usage: apdp [-c conffile] -f update \n");
+		       fprintf(stderr, "       -t type -l sw|hf|bases|bases-all|personal\n");
+		       fprintf(stderr, "       -h channel [-e description_file] -r revision -d dest_rev\n");
+		       exit(1);
+	       }
+
+	if (updtar == NULL) {
+		fprintf(stderr, "Missing mandatory update (-f) parameter\n");
+		exit(99);
+	}
+
+	if (revision == NULL) {
+		fprintf(stderr, "Missing mandatory revision (-r) parameter\n");
+		exit(99);
+	}
+
+	if (dest_rev == NULL) {
+		fprintf(stderr, "Missing mandatory destination revision (-d) parameter\n");
+		exit(99);
+	}
+
+	if (dest_rev == NULL) {
+		fprintf(stderr, "Missing mandatory channel (-h) parameter\n");
+		exit(99);
+	}
+
+	if (aptype == NULL) {
+		fprintf(stderr, "Missing mandatory apdate type (-t) parameter\n");
+		exit(99);
 	}
 
 	if (conf_parse(conffile_name) != 0) {
-		printf("Can't read config file '%s'\n", conffile_name);
+		fprintf(stderr,"Can't read config file '%s'\n", conffile_name);
 		exit(2);
 	}
 
 	gnutls_global_init();
+	
+	certfd = open(certfile, O_RDONLY);
+	if (certfd < 0) {
+		fprintf(stderr, "Error opening apdate certificate\n");
+		exit(1212);
+	}
+	certdata.size = lseek(certfd, 0, SEEK_END);
+	certdata.data = mmap(NULL, certdata.size, PROT_READ, MAP_SHARED, certfd,
+			     0);
+	if (certdata.data == MAP_FAILED) {
+		fprintf(stderr, "Error mapping apdate certificate\n");
+		close(certfd);
+		exit(123);
+	}
 
-	crt = load_certificate(certfile);
-	if (crt == NULL) {
+	ncerts = load_certificate_ram(&crt, certdata);
+	if (ncerts <= 0) {
 		fprintf(stderr, "Error loading apdate certificate\n");
 		exit(1);
 	}
@@ -68,152 +165,155 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Error loading apdate private key\n");
 		exit(2);
 	}
-	fdata = load_file(verdesc);
-	version = apdate_parse_version((char *) fdata.data, fdata.size);
-	if (version == NULL) {
-		fprintf(stderr, "Error parsing version file\n");
+#if (GNUTLS_VERSION_NUMBER >= 0x020c00)
+	if (gnutls_privkey_init(&newkey) != GNUTLS_E_SUCCESS) {
+		fprintf(stderr, "Error initing gnutls_privkey_t\n");
+		exit(27);
+	}
+	if (gnutls_privkey_import_x509(newkey, *key, 0) != GNUTLS_E_SUCCESS) {
+		fprintf(stderr, "Error converting apdate private key\n");
+		exit(28);
+	}
+#endif
+	pname = strdup(TMP_FILE_PATTERN);
+	out = mkstemp(pname);
+	if (out < 0) {
+		fprintf(stderr, "Can't create temp output file\n");
 		exit(3);
 	}
-	unload_file(fdata);
-	fdata = load_file(prodfile);
-	products = apdate_parse_product_list((char *) fdata.data, fdata.size);
-	if (products == NULL) {
-		fprintf(stderr, "Error loading products file\n");
-		exit(4);
+
+	apfile = open(updtar, O_RDONLY);
+	if (apfile < 0) {
+		fprintf(stderr, "Error opening update file\n");
+		exit(999);
 	}
-	unload_file(fdata);
-	tmpdir = strdup(TMP_DIR_PATTERN);
-	tmpdir = mkdtemp(tmpdir);
-	if (tmpdir == NULL) {
-		fprintf(stderr, "Error: can't create tmp directory\n");
-		exit(5);
+	fdata.size = lseek(apfile, 0, SEEK_END);
+	fdata.data = mmap(NULL, fdata.size, PROT_READ, MAP_SHARED, apfile, 0);
+	if (fdata.data == MAP_FAILED) {
+		fprintf(stderr, "Error mapping update file\n");
+		exit(483);
 	}
-	cmdline = malloc(256);
-	sprintf(cmdline, "cp %s %s/update", updtar, tmpdir);
-	ret = system(cmdline);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to copy update into temporary dir\n");
+
+	descdata.size = 0;
+	descdata.data = NULL;
+	if (descfile != NULL) {
+		descfd = open(descfile, O_RDONLY);
+		if (descfd < 0) {
+			fprintf(stderr, "Error opening description file\n");
+			exit(999);
+		}
+		descdata.size = lseek(descfd, 0, SEEK_END);
+		if (descdata.size > 0) {
+			descdata.data = mmap(NULL, descdata.size, PROT_READ, MAP_SHARED, descfd, 0);
+			if (descdata.data == MAP_FAILED) {
+				fprintf(stderr, "Error mapping description file\n");
+				exit(483);
+			}
+		}
+	}
+
+	// math.ceil(math.log10(math.pow(2,40))) + 1
+
+	/*
+	 * Signed message size
+	 * Magic + version_tag + filetype + type + channel
+	 * + description + revision + dest_revision + timestamp + certificate
+	 * + apdfile
+	 */
+	outdata.size = (strlen(APDATE_FILE_MAGIC)) + (1) + (4)
+		+ (strlen(aptype) + 1) + (strlen(channel) + 1)
+		+ (descdata.size + 1) + (8) + (8) + (8) + (certdata.size + 1)
+		+ (4 + fdata.size);
+	if (ftruncate(out, outdata.size) != 0) {
+		fprintf(stderr, "Can't truncate temp file\n");
+		goto out_bye;
+	}
+	outdata.data = mmap(NULL, outdata.size, PROT_READ | PROT_WRITE, MAP_SHARED, out,
+		    0);
+	if (outdata.data == MAP_FAILED) {
+		fprintf(stderr, "Can't mmap temp file\n");
+		goto out_bye;
+	}
+	fmap = mempcpy(outdata.data, APDATE_FILE_MAGIC, strlen(APDATE_FILE_MAGIC));
+	fmap = mempcpy(fmap, &version_tag, 1);
+	ui32 = htobe32((uint32_t) filetype);
+	fmap = mempcpy(fmap, &ui32, 4);
+	fmap = mempcpy(fmap, aptype, strlen(aptype) + 1);
+	fmap = mempcpy(fmap, channel, strlen(channel) + 1);
+	if (descdata.size != 0)
+		fmap = mempcpy(fmap, descdata.data, descdata.size);
+	*fmap = '\0';
+	fmap++;
+	ui64 = htobe64((uint64_t) atoll(revision));
+	fmap = mempcpy(fmap, &ui64, 8);
+	ui64 = htobe64((uint64_t) atoll(dest_rev));
+	fmap = mempcpy(fmap, &ui64, 8);
+	ui64 = htobe64((uint64_t) time(NULL));
+	fmap = mempcpy(fmap, &ui64, 8);
+	fmap = mempcpy(fmap, certdata.data, certdata.size);
+	*fmap = '\0';
+	fmap++;
+	ui32 = htobe32(fdata.size);
+	fmap = mempcpy(fmap, &ui32, 4);
+	fmap = mempcpy(fmap, fdata.data, fdata.size);
+	if (munmap(certdata.data, certdata.size) != 0
+	    || munmap(fdata.data, fdata.size) != 0
+	    || (descdata.size != 0 && munmap(descdata.data, descdata.size) != 0)) {
+		fprintf(stderr, "Unmapping error\n");
 		goto out_clean_tmp;
 	}
-	sprintf(cmdline, "cp %s %s/certificate", certfile, tmpdir);
-	ret = system(cmdline);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to copy generator certificate into temporary dir\n");
-		goto out_clean_tmp;
-	}
-	fdata = load_file(updtar);
-	if (fdata.data == NULL) {
-		fprintf(stderr, "Failed to load update\n");
-		goto out_clean_tmp;
-	}
-	ret = gnutls_x509_privkey_sign_data(*key, GNUTLS_DIG_SHA256, 0, &fdata, \
-				      signature, &signature_size);
-	unload_file(fdata);
+	close(certfd);
+	close(apfile);
+	if (descfd != -1)
+		close(descfd);
+	
+	/* Make relative pointer */
+	l = fmap - (char *) outdata.data;
+
+#if (GNUTLS_VERSION_NUMBER >= 0x021200)
+	ret = gnutls_privkey_sign_data(newkey, GNUTLS_DIG_SHA256, 0, &outdata,
+				      &signature);
+#else
+	signature.data = malloc(SIGNATURE_SIZE);
+	signature.size = SIGNATURE_SIZE;
+	ret = gnutls_x509_privkey_sign_data(*key, GNUTLS_DIG_SHA256, 0, &outdata,
+					    signature.data, (size_t *) &signature.size);
+#endif
 	if (ret != GNUTLS_E_SUCCESS) {
 		fprintf(stderr, "Failed to sign update\n");
 		goto out_clean_tmp;
 	}
-	sprintf(cmdline, "%s/update.sig", tmpdir);
-	signf = fopen(cmdline, "w");
-	if (signf == NULL) {
-		fprintf(stderr, "Failed to create signature file for update\n");
+	if (ftruncate(out, outdata.size + 4 + signature.size) != 0) {
+		fprintf(stderr, "Failed to make output file");
 		goto out_clean_tmp;
 	}
-	fwrite(signature, 1, signature_size, signf);
-	fclose(signf);
-
-	verf_name = strconcat(tmpdir, "/version");
-	if (verf_name == NULL) {
-		fprintf(stderr, "Error: OOM\n");
+	
+	outdata.data = mremap(outdata.data, outdata.size, outdata.size + 4
+			    + signature.size, MREMAP_MAYMOVE);
+	if (outdata.data == MAP_FAILED) {
+		fprintf(stderr, "Failed to remap output file");
 		goto out_clean_tmp;
 	}
-	verf = fopen(verf_name, "w");
-	if (verf == NULL) {
-		fprintf(stderr, "Error working with version file in temporary directory");
+	fmap = (char *) outdata.data + l;
+
+	l = htobe32(signature.size);
+	fmap = mempcpy(fmap, &l, 4);
+	fmap = mempcpy(fmap, signature.data, signature.size);
+	free(signature.data);
+	if (munmap(outdata.data, outdata.size + 4 + signature.size) != 0) {
+		fprintf(stderr, "Failed to unmap output file");
 		goto out_clean_tmp;
 	}
-	ctime = time(NULL);
-	fprintf(verf, "%s\n", version->type);
-	fprintf(verf, "%li\n", (long int) ctime);
 
-	pname = malloc(128);
-	sprintf(pname, "%s-%li.apd", version->type, (long int) ctime);
-
-	lncmds = malloc(version->pr_cnt * sizeof(char *));
-	lockfile = strconcat(upddb, ".lock");
-	fdb_lock = get_file_lock(lockfile);
-	for (i = 0; i < version->pr_cnt; i++) {
-		uint32_t code;
-		uint64_t last;
-		int num_patches, j;
-		char prpath[256], lncmd[256];
-		struct dirent **proddir;
-
-		code = (uint32_t) strcode_get_code(products->prodcode,
-						   products->size,
-						   version->product[i].str);
-		if (code == 0) {
-			fprintf(stderr, "Bad product in version file: %s",
-				version->product[i].str);
-			goto release_lock_out;
-		}
-		sprintf(prpath, "%s/%u", upddb, code);
-		num_patches = scandir(prpath, &proddir, NULL, versionsort);
-		if (num_patches != 0)
-			last = atoll(proddir[num_patches-1]->d_name);
-		else
-			last = 0;
-		last++;
-		for (j = 0; j < num_patches; j++)
-			free(proddir[j]);
-		free(proddir);
-		fprintf(verf, "%s:%llu\n", version->product[i].str,
-			(long long unsigned int) last);
-		sprintf(lncmd, "ln -fs ../patches/%s %s/%llu", pname, prpath,
-			(long long unsigned int) last);
-		lncmds[i] = strdup(lncmd);
-	}
-	fclose(verf);
-	fdata = load_file(verf_name);
-	if (fdata.data == NULL) {
-		fprintf(stderr, "Failed to load generated version file\n");
-		goto release_lock_out;
-	}
-	signature_size = SIGNATURE_SIZE;
-	ret = gnutls_x509_privkey_sign_data(*key, GNUTLS_DIG_SHA256, 0, &fdata, \
-				      signature, &signature_size);
-	unload_file(fdata);
-	if (ret != GNUTLS_E_SUCCESS) {
-		fprintf(stderr, "Failed to sign version file\n");
-		goto release_lock_out;
-	}
-	sprintf(cmdline, "%s/version.sig", tmpdir);
-	signf = fopen(cmdline, "w");
-	if (signf == NULL) {
-		fprintf(stderr, "Failed to create signature file for version\n");
-		goto release_lock_out;
-	}
-	fwrite(signature, 1, signature_size, signf);
-	fclose(signf);
-
-	sprintf(cmdline, "tar czf %s/patches/%s -C %s .", upddb, pname, tmpdir);
-	ret = system(cmdline);
-	if (ret != 0) {
-		fprintf(stderr, "Failed to create apdate tarball\n");
-		goto release_lock_out;
-	}
-	for (i = 0; i < version->pr_cnt; i++) {
-		ret = system(lncmds[i]);
-		if (ret != 0) {
-			fprintf(stderr, "Symlinking apdate tarball failed: %s\n",
-				lncmds[i]);
-			goto release_lock_out;
-		}
-	}
-release_lock_out:
-	release_file_lock(lockfile, fdb_lock);
-out_clean_tmp:
-	sprintf(cmdline, "rm -fr %s", tmpdir);
-	system(cmdline);
+	close(out);
+	/* file name to stdout */
+	printf("%s\n", pname);
 	return 0;
+
+out_clean_tmp:
+	close(out);
+
+	unlink(pname);
+out_bye:
+	return -1;
 }

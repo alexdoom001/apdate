@@ -1,0 +1,23 @@
+#!/bin/bash
+# Create and push hand-made system update
+# To be ran by cron hourly
+
+. `dirname $0`/packers-lib
+
+TYPE=$1
+CHANNEL=$2
+PFILE=$3
+UTYPE=$4
+DESCF=$5
+
+if [ "x$TYPE" = "x" -o "x$CHANNEL" = "x" -o "x$PFILE" = "x" -o "x$UTYPE" = "x" ]; then
+	echo "Usage: /script product version patch-file"
+	exit 1
+fi
+TARGET=$APDS_BASE/$TYPE/$CHANNEL
+lock $TARGET
+sign_and_push $PFILE any $UTYPE $DESCF
+unlock $TARGET
+
+exit 0
+

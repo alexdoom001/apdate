@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+#	/etc/init.d/apdc
+#
+# Starts Apdate client
+#
+
+start() {
+	echo -n $"Starting Apdate update client: "
+	start-stop-daemon -p /var/run/apdc.pid -m -x /usr/bin/apdc -b -S
+	echo "OK."
+}
+
+stop() {
+	echo -n $"Stopping Apdate update client: "
+	start-stop-daemon -x /usr/bin/apdc -K
+	rm -f /var/run/apdc.pid
+	echo "OK."
+}
+
+restart() {
+	stop
+	start
+}	
+
+case "$1" in
+start)
+	start
+	;;
+stop)
+	stop
+	;;
+restart)
+	restart
+	;;
+*)
+	echo $"Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit 0

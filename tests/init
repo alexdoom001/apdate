@@ -1,0 +1,36 @@
+#!/bin/sh
+
+DIR=$PWD
+APDSDB=$DIR/apdsdb
+UPDSTORAGE=$DIR/apdate
+
+rm -fr apdsdb etc client*
+
+# init certs
+#cd ../certs
+#./makecerts
+#cd $DIR
+
+mkdir -p $UPDSTORAGE
+mkdir -p etc/apds
+mkdir -p etc/apdc
+mkdir -p etc/apdp
+mkdir -p lib/apdc
+cat ../apds.conf | sed -r  -e "s,^update_db_path.*,update_db_path \"$APDSDB/\"," \
+			-e "s,^port.*,port 7900," \
+			-e "s,/etc/apds,$DIR/etc/apds," > $DIR/etc/apds/apds.conf
+cp ../certs/ca-cert.pem $DIR/etc/apds/ca.pem
+cp ../certs/crl.pem $DIR/etc/apds/crl.pem
+cp ../certs/updateserv-cert.pem $DIR/etc/apds/cert.pem
+cp ../certs/updateserv-key.pem $DIR/etc/apds/key.pem
+
+cat ../apdp.conf | sed -r  -e "s,^update_db_path.*,update_db_path \"$APDSDB/\"," \
+			-e "s,/etc/apdp,$DIR/etc/apdp," > $DIR/etc/apdp/apdp.conf
+cp ../certs/ca-cert.pem $DIR/etc/apdp/ca.pem
+cp ../certs/crl.pem $DIR/etc/apdp/crl.pem
+cp ../certs/upgen-cert.pem $DIR/etc/apdp/cert.pem
+cp ../certs/upgen-key.pem $DIR/etc/apdp/key.pem
+for i in ../unpackers/*; do
+	echo -e "#\!/bin/sh\ntrue" > lib/apdc/`basename $i`
+	chmod 755 lib/apdc/`basename $i`
+done

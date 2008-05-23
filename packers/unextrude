@@ -1,0 +1,12 @@
+#!/bin/bash
+
+
+
+find /var/db/apds -type f | while read file; do
+     fname=`basename $file`
+     part1=`echo $fname | cut -f 1 -d '-'`
+     part2=`echo $fname | cut -f 2 -d '-'`
+     if [ $((part1 + 1)) -ne $part2 ]; then
+	     rm $file
+     fi
+done

@@ -1,10 +1,11 @@
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -17,27 +18,24 @@ static pthread_rwlock_t updlist_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 static int map_upd_file_to_list(const char *fname, const unsigned int i)
 {
-	char *path;
-	struct stat fst;
-
-	path = strconcat(upddb, fname);
-	if (stat(path, &fst) != 0) {
-		free(path);
-		return -1;
-	}
-	upd_list[i].map.size = fst.st_size;
-	upd_list[i].fd = open(path, O_RDONLY);
+	upd_list[i].fd = open(fname, O_RDONLY);
 	if (upd_list[i].fd < 0) {
-		free(path);
+		syslog(LOG_ERR, "Failed to open %s: %s", fname, strerror(errno));
 		return -1;
 	}
+	/* Get file size*/
+	if ((upd_list[i].map.size = lseek(upd_list[i].fd, 0, SEEK_END)) < 0
+	    || lseek(upd_list[i].fd, 0, SEEK_SET) != 0) {
+		close(upd_list[i].fd);
+		return -1;
+	}
+
 	upd_list[i].map.mmap = mmap(NULL, upd_list[i].map.size, PROT_READ,
 				    MAP_SHARED | MAP_POPULATE, upd_list[i].fd,
 				    0);
 	if (upd_list[i].map.mmap == MAP_FAILED) {
 		upd_list[i].map.mmap = NULL;
 		close(upd_list[i].fd);
-		free(path);
 		return -1;
 	}
 	upd_list[i].name = strdup(fname);
@@ -45,7 +43,6 @@ static int map_upd_file_to_list(const char *fname, const unsigned int i)
 		munmap(upd_list[i].map.mmap, upd_list[i].map.size);
 		upd_list[i].map.mmap = NULL;
 		close(upd_list[i].fd);
-		free(path);
 		return -1;
 	}
 	pthread_rwlock_init(&upd_list[i].lock, NULL);
@@ -60,17 +57,15 @@ static struct upd_map map_upd_file(const char *fname)
 
 	pthread_rwlock_wrlock(&updlist_lock);
 	for (i = 0; i < upd_list_size; i++)
-		if (upd_list[i].name == NULL && upd_list[i].map.mmap == NULL)
+		if (upd_list[i].name == NULL)
 			break;
 	if (i == upd_list_size) {
-		upd_list = realloc(upd_list, upd_list_size *
-				   sizeof(struct mapd_upd_file) * 2);
+		upd_list = realloc(upd_list, UPD_LIST_SIZE * 2);
 		if (upd_list == NULL) {
-			printf("Growing upd_list failed!\n");
+			syslog(LOG_ERR, "Growing upd_list failed!");
 			exit(300);
 		}
-		memset(&(upd_list[i]), 0, upd_list_size *
-		       sizeof(struct mapd_upd_file));
+		memset(&(upd_list[i]), 0, UPD_LIST_SIZE);
 		upd_list_size *= 2;
 	}
 	ret = map_upd_file_to_list(fname, i);
@@ -88,7 +83,6 @@ struct upd_map get_upd_map(const char *fname)
 	pthread_rwlock_rdlock(&updlist_lock);
 	for (i = 0; i < upd_list_size; i++)
 		if (upd_list[i].name != NULL &&
-		    upd_list[i].map.mmap != NULL &&
 		    (strcmp(upd_list[i].name, fname) == 0)) {
 			pthread_rwlock_rdlock(&upd_list[i].lock);
 			pthread_rwlock_unlock(&updlist_lock);
@@ -101,6 +95,7 @@ struct upd_map get_upd_map(const char *fname)
 void release_upd_file(struct upd_map upf)
 {
 	unsigned int i;
+
 	pthread_rwlock_rdlock(&updlist_lock);
 	for (i = 0; i < upd_list_size; i++)
 		if (upd_list[i].map.mmap == upf.mmap) {
@@ -123,15 +118,18 @@ void *apds_fcache_thread(void *smth)
 {
 	unsigned int i;
 
+	// Not interested in any kind of joining here
+	pthread_detach(pthread_self());
+	i = UPD_LIST_SIZE;
 	pthread_rwlock_wrlock(&updlist_lock);
-	i = MAPD_LIST_INIT_SIZE * sizeof(struct mapd_upd_file);
 	upd_list = malloc(i);
 	if (upd_list == NULL) {
-		printf("Unable to initialize file cache\n");
+		syslog(LOG_ERR, "Unable to initialize file cache");
 		exit(200);
 	}
 	memset(upd_list, 0, i);
 	pthread_rwlock_unlock(&updlist_lock);
+	pthread_barrier_wait(&initbarrier);
 
 	/* Sort of garbage collection */
 	while (1) {

@@ -1,0 +1,52 @@
+#!/bin/bash
+# Create and push spamassassin rules update
+# To be ran by cron hourly
+
+. `dirname $0`/packers-lib
+
+TYPE=spamassassin-antispam
+DBPATH=$APDP_BASE/$TYPE
+
+for CF in `ls $DBPATH/*.cf`; do
+	CHANNEL=`basename $CF .cf`
+	RDIR=$DBPATH/$CHANNEL
+	CVER=`cat ${RDIR}.ver`
+	SUBDOMAIN=`tail -n 1 $CF`
+	TARGET=$APDS_BASE/$TYPE/$CHANNEL
+
+	UPVER=`dig +noall +answer $SUBDOMAIN.updates.spamassassin.org TXT | grep -E -o \"[0-9]+\" | tr -d \"`
+	if [ "x$UPVER" == "x" ]; then
+		echo "Failed to fetch update version info for $CF"
+		clean_tmpd
+		exit 1
+	fi
+	if [ "$UPVER" -eq "$CVER" ]; then
+		continue
+	fi
+
+	lock $TARGET
+	if [ ! -f $TMPD/$UPVER.tar.gz ]; then
+		wget -q -c -O $TMPD/$UPVER.tar.gz http://www.sa-update.pccc.com/$UPVER.tar.gz
+		if [ "$?" != "0" ]; then
+			echo "Failed to fetch update file for $CF"
+			clean_tmpd
+			exit 2
+		fi
+		mkdir $TMPD/$UPVER
+		tar xzf $TMPD/$UPVER.tar.gz -C $TMPD/$UPVER
+	fi
+	mkdir $TMPD/spam
+	create_delta $RDIR $TMPD/$UPVER $TMPD/spam
+	LIST=`ls $TMPD/spam`
+	if [ "x$LIST" != "x" ]; then
+		tar czf $TMPD/spam.tar.gz -C $TMPD spam
+		sign_and_push $TMPD/spam.tar.gz bases
+		rm -fr $RDIR
+		mv $TMPD/$UPVER $RDIR
+		echo "$UPVER" > ${RDIR}.ver
+	fi
+	rm -fr $TMPD/spam
+	unlock $TARGET
+done
+
+exit 0

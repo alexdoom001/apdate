@@ -1,0 +1,141 @@
+#!/bin/bash
+
+set -e
+set -x
+CLIENTSN=111
+MACHTYPE=vyatta-6.2-x86_64-generic
+APDPMACH="../apdp -c etc/apdp/apdp.conf -f /etc/passwd -t $MACHTYPE"
+APDPBASE="../apdp -c etc/apdp/apdp.conf -f /etc/passwd"
+APDAPP="../apda etc/apdc0090$CLIENTSN/apdc.conf apply"
+APDAEX="../apda etc/apdc0090$CLIENTSN/apdc.conf extract"
+APDIREV="../apdi -c etc/apdc0090$CLIENTSN/apdc.conf -s rev"
+APDIREVF="../apdi -c etc/apdc0090$CLIENTSN/apdc.conf -s revfull"
+PKITERS=200
+PKITERS2=$((PKITERS*2))
+PKITERSH=`printf '%.2x' $PKITERS`
+PKITERSH2=`printf '%.2x' $PKITERS2`
+
+./mkclient x86_64-generic "vyatta 6.2" $CLIENTSN
+
+# Basic sw updates
+for channel in base; do
+	for i in `seq 1 $PKITERS`; do
+		p=$((i-1))
+		F=`$APDPMACH -l sw -h $channel -e /etc/passwd -r $p -d $i`
+		$APDAPP $F
+		# Applying the same patch twice MUST fail
+		if $APDAPP $F; then
+			false
+		fi
+		rm $F
+		# Check
+		case "$channel" in
+			base)
+				$APDIREV | grep -q ^`printf '%.2x' $i`:00:00$
+				;;
+			*)
+				false
+		esac
+		$APDIREVF | grep ^$MACHTYPE/$channel | grep -q $i/0
+	done
+done
+
+# Hotfixes
+for channel in base; do
+	for i in `seq 1 $PKITERS`; do
+		F=`$APDPMACH -l hf -h $channel -e /dev/null -r $PKITERS -d $i`
+		$APDAPP $F
+		# Applying the same patch twice MUST fail
+		if $APDAPP $F; then
+			false
+		fi
+		rm $F
+		# Check
+		$APDIREV | grep -q ^$PKITERSH:$PKITERSH:$PKITERSH$
+		$APDIREVF | grep ^$MACHTYPE/$channel | grep -q $PKITERS/$i
+	done
+done
+
+# Base sw after hotfix
+for channel in base; do
+	for i in `seq $((PKITERS+1)) $PKITERS2`; do
+		p=$((i-1))
+		F=`$APDPMACH -l sw -h $channel -e /etc/passwd -r $p -d $i`
+		$APDAPP $F
+		# Applying the same patch twice MUST fail
+		if $APDAPP $F; then
+			false
+		fi
+		rm $F
+		# Check
+		case "$channel" in
+			base)
+				$APDIREV | grep -q ^`printf '%.2x' $i`:$PKITERSH:$PKITERSH$
+				;;
+			*)
+				false
+		esac
+		$APDIREVF | grep ^$MACHTYPE/$channel | grep -q $i/0
+	done
+done
+
+# Bases update
+for btype in clamav-antivirus idps-rules spamassassin-antispam web-blacklists; do
+	for i in `seq 1 $PKITERS`; do
+		p=$((i-1))
+		F=`$APDPMACH -t $btype -l bases -h 1.0 -r $p -d $i`
+		$APDAPP $F
+		# Applying the same patch twice MUST fail
+		if $APDAPP $F; then
+			false
+		fi
+		rm $F
+		# Check
+		$APDIREV | grep -q ^$PKITERSH2:$PKITERSH2:$PKITERSH2$
+		$APDIREVF | grep ^$btype/1.0 | grep -q $i
+	done
+done
+
+# Bases-all (bad)
+for btype in clamav-antivirus idps-rules spamassassin-antispam web-blacklists; do
+	F=`$APDPMACH -t $btype -l bases-all -h 1.0 -r 0 -d 1`
+	# Should fail if iters>1 because it goes backwards
+	if $APDAPP $F; then
+		false
+	fi
+	rm $F
+done
+
+# Bases-all (good)
+for btype in clamav-antivirus idps-rules spamassassin-antispam web-blacklists; do
+	for i in `seq $((PKITERS+1)) $PKITERS2`; do
+		p=$((i-1))
+		F=`$APDPMACH -t $btype -l bases-all -h 1.0 -r 0 -d $i`
+		$APDAPP $F
+		# Applying the same patch twice MUST fail
+		if $APDAPP $F; then
+			false
+		fi
+		rm $F
+		# Check
+		$APDIREV | grep -q ^$PKITERSH2:$PKITERSH2:$PKITERSH2$
+		$APDIREVF | grep ^$btype/1.0 | grep -q $i
+	done
+done
+
+# Personal updates
+for i in `seq 1 $PKITERS`; do
+	p=$((i-1))
+	F=`$APDPBASE -t personal -l personal -h 0090$CLIENTSN -r $p -d $i`
+	$APDAPP $F
+	# Applying the same patch twice MUST fail
+	if $APDAPP $F; then
+		false
+	fi
+	rm $F
+	# Check
+	$APDIREV | grep -q ^$PKITERSH2:$PKITERSH2:$PKITERSH2$
+	$APDIREVF | grep ^personal/0090$CLIENTSN | grep -q $i
+done
+
+echo "OK"

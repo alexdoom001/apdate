@@ -20,5 +20,6 @@ void release_upd_file(struct upd_map upf);
 void *apds_fcache_thread(void *smth);
 
 #define MAPD_LIST_INIT_SIZE 32
+#define UPD_LIST_SIZE (upd_list_size * sizeof(struct mapd_upd_file))
 
 #endif

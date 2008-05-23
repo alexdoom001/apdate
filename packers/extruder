@@ -1,0 +1,133 @@
+#!/bin/bash
+
+# set -x
+set -e
+
+. `dirname $0`/packers-lib
+
+xdelta_merge() {
+	local TO=$1
+	local M=$2
+
+	ls $M | while read ENT; do
+		if [ ! -d $M/$ENT ]; then
+			local ORIFNAME=`echo $ENT | sed "s,.vcdiff$,,"`
+
+			if [ "$ENT" != "$ORIFNAME" ]; then
+				if [ -e $TO/$ORIFNAME ]; then
+					if [ ! -s $TO/$ORIFNAME ]; then
+						echo "vcdiff for removed file detected: $M/$ORIFNAME"
+						echo "upon $TARGET $i-$j merge with $PATCH"
+						tree -s $TO
+						tree -s $M
+					else
+						xdelta3 decode -q -c -s $TO/$ORIFNAME $M/$ENT > $TMPD/$ORIFNAME
+						if [ "$?" != "0" ]; then
+							echo "Xdelta decode failed for $M/$ENT"
+							echo "upon $TARGET $i-$j merge with $PATCH"
+						fi
+						mv $TMPD/$ORIFNAME $TO/$ORIFNAME
+					fi
+				else
+					if [ -e $TO/$ENT ]; then
+						xdelta3 merge -m $TO/$ENT $M/$ENT $TMPD/$ENT
+						mv $TMPD/$ENT $TO/$ENT
+					else
+						mv $M/$ENT $TO/$ENT
+					fi
+				fi
+			else
+				# Delete vcdiffs if replacing or removing
+				rm -f $TO/$ENT.vcdiff
+				mv $M/$ENT $TO/$ENT
+			fi
+		else
+			mkdir -p $TO/$ENT
+			xdelta_merge $TO/$ENT $M/$ENT
+		fi
+	done
+}
+has_better_upgrade() {
+	local P=$1
+	local C=$2
+	local step=$3
+	local lim=$4
+	local f=2
+
+	while expr $((C + f * step)) '<=' $lim >/dev/null; do
+		if [ -f $P/$C-$((C + f * step)) ]; then
+			return 0
+		fi
+		f=$((f * 2))
+	done
+	return 1
+}
+
+for TARGET in $APDS_BASE/*/*; do
+	VPATH=`echo $TARGET | sed "s,$APDS_BASE/,,"`
+	PATCHPATH=$APDS_BASE/patches/$VPATH
+	TYPE=`echo $VPATH | cut -f 1 -d '/'`
+	# Only squash bases update
+	case "$TYPE" in
+		clamav-antivirus)
+			;;
+		idps-rules)
+			;;
+		spamassassin-antispam)
+			;;
+		web-blacklists)
+			;;
+		*)
+			continue;
+	esac
+	CHANNEL=`echo $VPATH | cut -f 2 -d '/'`
+	if echo $CHANNEL | grep -E -q ".*\.lock$"; then
+		continue;
+	fi
+
+	lock $TARGET
+	LASTREV=`ls $PATCHPATH/ 2>/dev/null | cut -d '-' -f 2 | sort -n | tail -n 1`
+	STEP=4
+	while [ $((LASTREV/STEP)) -gt 0 ]; do
+		for i in `seq 0 $STEP $((LASTREV-STEP))`; do
+			j=$((i+STEP))
+			if has_better_upgrade $PATCHPATH $i $STEP $LASTREV; then
+				rm -f $PATCHPATH/$i-$j
+				continue;
+			fi
+			if [ -f $PATCHPATH/$i-$j ]; then
+				continue;
+			fi
+
+			if [ ! -d $TMPD/work ]; then
+				mkdir $TMPD/work
+			fi
+
+			get_db_revision $i
+			get_db_revision $j
+			pdir=`find $TMPD/work -maxdepth 1 -type d | sed "s,^$TMPD/work,," | sed '/^$/d'`
+			create_delta $TMPD/revision-$i $TMPD/revision-$j $TMPD/work/$pdir
+			content=`ls $TMPD/work`
+			tar czf $TMPD/newpatch.tar.gz -C $TMPD/work $content
+			AP=`apdp -f $TMPD/newpatch.tar.gz -t $TYPE -l bases -h $CHANNEL -r $i -d $j`
+			if [ "x$AP" == "x" ]; then
+				echo "Error signing apdate file"
+			else
+				mv $AP $PATCHPATH/$i-$j
+				ln -sf ../../patches/$VPATH/$i-$j $TARGET/$i
+			fi
+			rm -fr $TMPD/work
+		done
+		STEP=$((STEP*2))
+	done
+	rm -fr $TMPD/revision-* &
+	cat $CONFDIR/apdp.externs | while read REMOTE; do
+		rsync -a $APDS_BASE/patches/$TYPE/$CHANNEL/ $REMOTE/patches/$TYPE/$CHANNEL/
+		rsync -a $APDS_BASE/$TYPE/$CHANNEL/ $REMOTE/$TYPE/$CHANNEL/
+	done
+	# We've done with target directory and only waiting for cleanups to finish
+	unlock $TARGET
+	wait
+done
+
+clean_tmpd
